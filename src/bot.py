@@ -20,6 +20,11 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
 
+# テスト用のギルドID（環境変数から取得、未設定の場合はNone）
+# 特定のギルドでのみコマンドを使いたい場合は、ここにギルドIDを設定
+GUILD_ID = os.getenv("DISCORD_GUILD_ID")
+TEST_GUILD = discord.Object(id=int(GUILD_ID)) if GUILD_ID else None
+
 # Intentsの設定
 intents = discord.Intents.default()
 intents.message_content = True
@@ -54,8 +59,15 @@ class VoiceBot(commands.Bot):
             print("⚠ VOICEVOX Engineに接続できません。起動していることを確認してください。")
         
         # コマンドの同期
-        await self.tree.sync()
-        print("✓ スラッシュコマンドを同期しました")
+        if TEST_GUILD:
+            # 特定のギルドにのみコマンドを同期（即座に反映）
+            self.tree.copy_global_to(guild=TEST_GUILD)
+            await self.tree.sync(guild=TEST_GUILD)
+            print(f"✓ スラッシュコマンドをギルド {TEST_GUILD.id} に同期しました（即座に反映）")
+        else:
+            # 全ギルドに同期（グローバル、反映に最大1時間）
+            await self.tree.sync()
+            print("✓ スラッシュコマンドをグローバルに同期しました（反映に最大1時間）")
     
     async def close(self):
         """Bot終了時の処理"""
