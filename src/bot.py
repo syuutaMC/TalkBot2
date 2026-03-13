@@ -311,6 +311,40 @@ async def speed(interaction: discord.Interaction, speed: float):
 
 
 @bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    """ボイスチャンネルの状態が変更されたときのイベント"""
+    
+    # Botのボイスクライアントを取得
+    voice_client = member.guild.voice_client
+    
+    # Botがボイスチャンネルに接続していない場合は何もしない
+    if not voice_client:
+        return
+    
+    # Botが接続しているチャンネルを取得
+    bot_channel = voice_client.channel
+    
+    # メンバーがBotのいるチャンネルから退出した場合のみチェック
+    if before.channel == bot_channel:
+        # Bot以外のメンバー数をカウント
+        human_members = [m for m in bot_channel.members if not m.bot]
+        
+        # Bot以外のメンバーがいなくなった場合、自動で退出
+        if len(human_members) == 0:
+            print(f"✓ {member.guild.name} のボイスチャンネルにメンバーがいなくなったため、自動退出します")
+            await voice_client.disconnect()
+            
+            # ギルドの設定をクリーンアップ
+            guild_id = member.guild.id
+            if guild_id in bot.guild_configs:
+                del bot.guild_configs[guild_id]
+            if guild_id in bot.voice_queues:
+                del bot.voice_queues[guild_id]
+            if guild_id in bot.is_playing:
+                del bot.is_playing[guild_id]
+
+
+@bot.event
 async def on_message(message: discord.Message):
     """メッセージ受信時のイベント"""
     
