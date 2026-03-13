@@ -1,15 +1,22 @@
 version: '3.8'
 
 services:
-  # VOICEVOX Engine
+  # VOICEVOX Engine (GPU版)
   voicevox:
-    image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+    image: voicevox/voicevox_engine:nvidia-ubuntu20.04-latest
     container_name: voicevox_engine
     ports:
       - "50021:50021"
     environment:
       - TZ=Asia/Tokyo
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:50021/version"]
       interval: 10s
@@ -36,9 +43,3 @@ services:
     volumes:
       # 設定ファイルの永続化
       - ../config/config.json:/app/config.json
-    networks:
-      - bot-network
-
-networks:
-  bot-network:
-    driver: bridge

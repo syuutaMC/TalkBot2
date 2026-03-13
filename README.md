@@ -35,6 +35,8 @@ erii_TalkBot/
 ### Dockerを使う場合（推奨）
 - Docker
 - Docker Compose
+- **NVIDIA GPU（推奨）** - GPU版VOICEVOX Engineを使用
+- NVIDIA Container Toolkit（GPU使用時）
 - Discord Bot Token
 
 ### 直接起動する場合
@@ -47,6 +49,11 @@ erii_TalkBot/
 
 ### 1. VOICEVOX Engineのインストール
 
+#### Dockerを使う場合（GPU対応）
+Docker Composeを使用する場合、VOICEVOX EngineのGPU版が自動的に起動します。
+NVIDIA GPUを使用するには、[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)のインストールが必要です。
+
+#### 直接起動する場合
 [VOICEVOX公式サイト](https://voicevox.hiroshiba.jp/)からVOICEVOX Engineをダウンロードして起動してください。
 
 デフォルトでは `http://127.0.0.1:50021` で起動します。
@@ -127,7 +134,9 @@ VOICEVOX_URL=http://127.0.0.1:50021
 
 ### Dockerを使う場合（推奨）
 
-Dockerを使えばVOICEVOX EngineとBotを一緒に簡単に起動できます。
+Dockerを使えばGPU対応のVOICEVOX EngineとBotを一緒に簡単に起動できます。
+
+**注意**: NVIDIA GPUを使用する場合は、事前に[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)をインストールしてください。
 
 ```bash
 # .envファイルを作成（DISCORD_TOKENを設定）
@@ -239,6 +248,10 @@ docker-compose up -d
 #### VOICEVOX Engineが起動しない
 - メモリが不足していないか確認（最低4GB推奨）
 - Docker Desktopのリソース設定を確認
+- GPU版を使用する場合：
+  - NVIDIA Container Toolkitがインストールされているか確認
+  - `nvidia-smi` コマンドでGPUが認識されているか確認
+  - GPUが使用できない場合は、docker-compose.ymlのイメージを `voicevox/voicevox_engine:cpu-ubuntu20.04-latest` に変更してCPU版を使用
 
 ### 直接起動時
 
