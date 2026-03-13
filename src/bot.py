@@ -379,8 +379,8 @@ async def on_message(message: discord.Message):
         text = "URL省略"
     
     # 長すぎるメッセージは省略
-    if len(text) > 100:
-        text = text[:100] + "、以下省略"
+    if len(text) > 500:
+        text = text[:500] + "、以下省略"
     
     # ユーザーの話者IDを取得（未設定なら1）
     speaker_id = bot.user_speakers.get(message.author.id, 1)
