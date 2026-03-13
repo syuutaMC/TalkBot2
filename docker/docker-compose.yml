@@ -3,6 +3,7 @@ services:
   voicevox:
     image: voicevox/voicevox_engine:nvidia-ubuntu20.04-latest
     container_name: voicevox_engine
+    privileged: true
     ports:
       - "50021:50021"
     environment:

@@ -148,8 +148,76 @@ async def leave(interaction: discord.Interaction):
         await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
 
 
+@bot.tree.command(name="help", description="使い方と話者一覧を表示します")
+async def help_command(interaction: discord.Interaction):
+    """ヘルプと話者一覧を表示するコマンド"""
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    # 基本的な使い方
+    help_text = """**📢 Discord読み上げBot - 使い方**
+
+**基本コマンド:**
+• `/join` - ボイスチャンネルに参加
+• `/leave` - ボイスチャンネルから退出
+• `/voice <番号>` - 読み上げ音声を変更（下の一覧から選択）
+• `/speed <数値>` - 読み上げ速度を設定（0.5〜2.0）
+• `/speakers` - 詳細な話者一覧を表示
+• `/help` - このヘルプを表示
+
+**使い方:**
+1. `/join` でボイスチャンネルに参加
+2. テキストチャンネルにメッセージを送ると自動で読み上げ
+3. `/voice <番号>` で自分の声を変更できます
+
+"""
+    
+    # 話者一覧を取得
+    speakers_list = await bot.voicevox.get_speakers()
+    
+    if speakers_list:
+        help_text += "**🎭 主な話者一覧（番号で指定）:**\n\n"
+        
+        # 話者をID順にソート
+        all_styles = []
+        for speaker in speakers_list:
+            speaker_name = speaker.get("name", "不明")
+            for style in speaker.get("styles", []):
+                style_name = style.get("name", "")
+                style_id = style.get("id", 0)
+                all_styles.append((style_id, speaker_name, style_name))
+        
+        all_styles.sort(key=lambda x: x[0])
+        
+        # 番号付きで表示
+        for style_id, speaker_name, style_name in all_styles:
+            help_text += f"`{style_id:2d}` - **{speaker_name}** ({style_name})\n"
+        
+        help_text += "\n💡 例: `/voice 3` で「ずんだもん（ノーマル）」に変更"
+    else:
+        help_text += "⚠ 話者一覧を取得できませんでした。VOICEVOX Engineが起動しているか確認してください。"
+    
+    # メッセージが長すぎる場合は分割
+    if len(help_text) > 2000:
+        chunks = []
+        current_chunk = ""
+        for line in help_text.split("\n"):
+            if len(current_chunk) + len(line) + 1 > 2000:
+                chunks.append(current_chunk)
+                current_chunk = line + "\n"
+            else:
+                current_chunk += line + "\n"
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        for i, chunk in enumerate(chunks):
+            await interaction.followup.send(chunk, ephemeral=True)
+    else:
+        await interaction.followup.send(help_text, ephemeral=True)
+
+
 @bot.tree.command(name="voice", description="読み上げ音声を変更します")
-@app_commands.describe(speaker_id="話者ID（1-60程度、詳細は/speakersで確認）")
+@app_commands.describe(speaker_id="話者ID（1-60程度、詳細は/helpで確認）")
 async def voice(interaction: discord.Interaction, speaker_id: int):
     """ユーザーごとの読み上げ音声を設定するコマンド"""
     
