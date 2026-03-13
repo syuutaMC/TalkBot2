@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 import asyncio
 import os
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Optional
@@ -19,6 +20,7 @@ load_dotenv()
 # 設定
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
+CONFIG_FILE = Path("config/config.json")
 
 # テスト用のギルドID（環境変数から取得、未設定の場合はNone）
 # 特定のギルドでのみコマンドを使いたい場合は、ここにギルドIDを設定
@@ -39,14 +41,45 @@ class VoiceBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
         self.voicevox = VoicevoxClient(VOICEVOX_URL)
         
-        # ギルドごとの設定を保存
-        self.guild_configs: Dict[int, dict] = {}
-        # ユーザーごとの話者ID設定
-        self.user_speakers: Dict[int, int] = {}
+        # 設定ファイルから読み込み
+        self._load_config()
+        
         # 読み上げキュー
         self.voice_queues: Dict[int, asyncio.Queue] = {}
         # 音声再生中フラグ
         self.is_playing: Dict[int, bool] = {}
+    
+    def _load_config(self):
+        """設定ファイルを読み込む"""
+        try:
+            if CONFIG_FILE.exists():
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    # 文字列キーを整数に変換
+                    self.user_speakers = {int(k): v for k, v in config.get("user_speakers", {}).items()}
+                    self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
+                    print(f"✓ 設定ファイルを読み込みました（ユーザー設定: {len(self.user_speakers)}件）")
+            else:
+                self.user_speakers = {}
+                self.guild_configs = {}
+                print("⚠ 設定ファイルが見つかりません。新規作成します。")
+        except Exception as e:
+            print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
+            self.user_speakers = {}
+            self.guild_configs = {}
+    
+    def _save_config(self):
+        """設定ファイルに保存する"""
+        try:
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            config = {
+                "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
+                "guild_configs": {str(k): v for k, v in self.guild_configs.items()}
+            }
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"⚠ 設定ファイルの保存に失敗: {e}")
     
     async def setup_hook(self):
         """Bot起動時の初期化処理"""
@@ -226,6 +259,7 @@ async def voice(interaction: discord.Interaction, speaker_id: int):
         return
     
     bot.user_speakers[interaction.user.id] = speaker_id
+    bot._save_config()  # 設定を保存
     await interaction.response.send_message(f"✓ あなたの読み上げ音声を話者ID {speaker_id} に設定しました", ephemeral=True)
 
 
