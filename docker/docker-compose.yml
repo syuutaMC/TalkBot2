@@ -15,12 +15,13 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:50021/version"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
+    # healthcheck を無効化（起動に時間がかかるため）
+    # healthcheck:
+    #   test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:50021/version')"]
+    #   interval: 15s
+    #   timeout: 10s
+    #   retries: 10
+    #   start_period: 60s
 
   # Discord読み上げBot
   discord-bot:
@@ -29,8 +30,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: discord_talkbot
     depends_on:
-      voicevox:
-        condition: service_healthy
+      - voicevox
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - VOICEVOX_URL=http://voicevox:50021

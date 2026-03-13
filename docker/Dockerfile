@@ -15,7 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # アプリケーションファイルのコピー
 COPY src/ ./src/
+COPY run.py ./
 COPY config/config.json ./config.json
 
-# Botの起動
-CMD ["python", "-u", "src/bot.py"]
+# 環境変数の設定
+ENV PYTHONUNBUFFERED=1
+
+# Botの起動（プロジェクトルートから実行）
+CMD ["python", "-u", "run.py"]
