@@ -57,15 +57,18 @@ class VoiceBot(commands.Bot):
                     config = json.load(f)
                     # 文字列キーを整数に変換
                     self.user_speakers = {int(k): v for k, v in config.get("user_speakers", {}).items()}
+                    self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
-                    print(f"✓ 設定ファイルを読み込みました（ユーザー設定: {len(self.user_speakers)}件）")
+                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件）")
             else:
                 self.user_speakers = {}
+                self.user_speeds = {}
                 self.guild_configs = {}
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
         except Exception as e:
             print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
             self.user_speakers = {}
+            self.user_speeds = {}
             self.guild_configs = {}
     
     def _save_config(self):
@@ -74,6 +77,7 @@ class VoiceBot(commands.Bot):
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             config = {
                 "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
+                "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
                 "guild_configs": {str(k): v for k, v in self.guild_configs.items()}
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -302,12 +306,9 @@ async def speed(interaction: discord.Interaction, speed: float):
         await interaction.response.send_message("速度は0.5〜2.0の範囲で指定してください", ephemeral=True)
         return
     
-    guild_id = interaction.guild.id
-    if guild_id not in bot.guild_configs:
-        bot.guild_configs[guild_id] = {}
-    
-    bot.guild_configs[guild_id]["speed"] = speed
-    await interaction.response.send_message(f"✓ 読み上げ速度を {speed} に設定しました", ephemeral=True)
+    bot.user_speeds[interaction.user.id] = speed
+    bot._save_config()  # 設定を保存
+    await interaction.response.send_message(f"✓ あなたの読み上げ速度を {speed} に設定しました", ephemeral=True)
 
 
 @bot.event
@@ -385,8 +386,8 @@ async def on_message(message: discord.Message):
     # ユーザーの話者IDを取得（未設定なら1）
     speaker_id = bot.user_speakers.get(message.author.id, 1)
     
-    # 速度設定を取得（未設定なら1.0）
-    speed = bot.guild_configs[guild_id].get("speed", 1.0)
+    # ユーザーの速度設定を取得（未設定なら1.0）
+    speed = bot.user_speeds.get(message.author.id, 1.0)
     
     # キューに追加
     await bot.voice_queues[guild_id].put({
