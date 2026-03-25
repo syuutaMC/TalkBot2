@@ -33,9 +33,7 @@ services:
     depends_on:
       - voicevox
     environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
       - VOICEVOX_URL=http://voicevox:50021
-      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
       - TZ=Asia/Tokyo
     env_file:
       - ../.env

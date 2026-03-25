@@ -16,7 +16,7 @@ import tempfile
 from src.voicevox_client import VoicevoxClient
 
 # 環境変数の読み込み
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 # 設定
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
