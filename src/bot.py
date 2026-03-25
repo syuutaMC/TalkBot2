@@ -192,6 +192,9 @@ async def join(interaction: discord.Interaction):
         await interaction.response.send_message("既にボイスチャンネルに接続しています！", ephemeral=True)
         return
     
+    # 接続に時間がかかる場合でもインタラクションが失効しないよう defer する
+    await interaction.response.defer()
+    
     try:
         # ボイスチャンネルに接続
         await channel.connect()
@@ -204,10 +207,10 @@ async def join(interaction: discord.Interaction):
             bot.voice_queues[guild_id] = asyncio.Queue()
             bot.is_playing[guild_id] = False
         
-        await interaction.response.send_message(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
+        await interaction.followup.send(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
         
     except Exception as e:
-        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+        await interaction.followup.send(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="leave", description="ボイスチャンネルから退出します")
@@ -217,6 +220,9 @@ async def leave(interaction: discord.Interaction):
     if not interaction.guild.voice_client:
         await interaction.response.send_message("ボイスチャンネルに接続していません！", ephemeral=True)
         return
+    
+    # 切断に時間がかかる場合でもインタラクションが失効しないよう defer する
+    await interaction.response.defer()
     
     try:
         await interaction.guild.voice_client.disconnect()
@@ -230,10 +236,10 @@ async def leave(interaction: discord.Interaction):
         if guild_id in bot.is_playing:
             del bot.is_playing[guild_id]
         
-        await interaction.response.send_message("✓ ボイスチャンネルから退出しました")
+        await interaction.followup.send("✓ ボイスチャンネルから退出しました")
         
     except Exception as e:
-        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+        await interaction.followup.send(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="help", description="使い方と話者一覧を表示します")

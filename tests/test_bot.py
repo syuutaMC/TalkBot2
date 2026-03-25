@@ -13,7 +13,7 @@ import pytest
 os.environ.setdefault("DISCORD_TOKEN", "dummy_token_for_testing")
 os.environ.setdefault("VOICEVOX_URL", "http://127.0.0.1:50021")
 
-from src.bot import VoiceBot
+from src.bot import VoiceBot, join, leave
 
 
 class TestSetupHookCommandSync:
@@ -117,3 +117,183 @@ class TestSetupHookCommandSync:
         mock_clear.assert_not_called()
 
         await bot.close()
+
+
+class TestJoinCommandDeferred:
+    """/join コマンドのインタラクション defer に関するテスト"""
+
+    def _make_interaction(self, *, has_voice=True, voice_client=None):
+        """テスト用の Interaction モックを生成するヘルパー"""
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        # ユーザーのボイス状態
+        if has_voice:
+            mock_channel = MagicMock()
+            mock_channel.name = "テストチャンネル"
+            mock_channel.connect = AsyncMock()
+            interaction.user.voice = MagicMock()
+            interaction.user.voice.channel = mock_channel
+        else:
+            interaction.user.voice = None
+
+        # ギルド
+        interaction.guild = MagicMock()
+        interaction.guild.id = 111222333
+        interaction.guild.voice_client = voice_client
+        interaction.channel = MagicMock()
+        interaction.channel.id = 999888777
+
+        return interaction
+
+    @pytest.mark.asyncio
+    async def test_join_defers_before_connect(self):
+        """/join は channel.connect() の前に defer() を呼ぶこと"""
+        interaction = self._make_interaction()
+        call_log: list = []
+
+        async def record_defer():
+            call_log.append("defer")
+
+        async def record_connect():
+            call_log.append("connect")
+
+        interaction.response.defer.side_effect = record_defer
+        interaction.user.voice.channel.connect.side_effect = record_connect
+        interaction.followup.send = AsyncMock()
+
+        await join.callback(interaction)
+
+        assert "defer" in call_log
+        assert "connect" in call_log
+        assert call_log.index("defer") < call_log.index("connect")
+
+    @pytest.mark.asyncio
+    async def test_join_uses_followup_on_success(self):
+        """/join 成功時は followup.send() を使うこと（response.send_message ではない）"""
+        interaction = self._make_interaction()
+        interaction.followup.send = AsyncMock()
+
+        await join.callback(interaction)
+
+        interaction.response.defer.assert_called_once()
+        interaction.followup.send.assert_called_once()
+        # response.send_message は呼ばれないこと
+        interaction.response.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_join_uses_followup_on_error(self):
+        """/join でエラーが発生した場合も followup.send() を使うこと"""
+        interaction = self._make_interaction()
+        interaction.user.voice.channel.connect.side_effect = Exception("接続エラー")
+        interaction.followup.send = AsyncMock()
+
+        await join.callback(interaction)
+
+        interaction.response.defer.assert_called_once()
+        interaction.followup.send.assert_called_once()
+        # エラーメッセージに ephemeral=True が付くこと
+        _, kwargs = interaction.followup.send.call_args
+        assert kwargs.get("ephemeral") is True
+
+    @pytest.mark.asyncio
+    async def test_join_no_voice_returns_immediately(self):
+        """/join はユーザーがボイスチャンネル未接続の場合、defer せずにエラーを返すこと"""
+        interaction = self._make_interaction(has_voice=False)
+
+        await join.callback(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        interaction.response.defer.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_join_already_connected_returns_immediately(self):
+        """/join はすでにボイスチャンネルに接続済みの場合、defer せずにエラーを返すこと"""
+        interaction = self._make_interaction(voice_client=MagicMock())
+
+        await join.callback(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        interaction.response.defer.assert_not_called()
+
+
+class TestLeaveCommandDeferred:
+    """/leave コマンドのインタラクション defer に関するテスト"""
+
+    def _make_interaction(self, *, has_voice_client=True):
+        """テスト用の Interaction モックを生成するヘルパー"""
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        interaction.guild = MagicMock()
+        interaction.guild.id = 111222333
+
+        if has_voice_client:
+            mock_vc = AsyncMock()
+            mock_vc.disconnect = AsyncMock()
+            interaction.guild.voice_client = mock_vc
+        else:
+            interaction.guild.voice_client = None
+
+        return interaction
+
+    @pytest.mark.asyncio
+    async def test_leave_defers_before_disconnect(self):
+        """/leave は voice_client.disconnect() の前に defer() を呼ぶこと"""
+        interaction = self._make_interaction()
+        call_log: list = []
+
+        async def record_defer():
+            call_log.append("defer")
+
+        async def record_disconnect():
+            call_log.append("disconnect")
+
+        interaction.response.defer.side_effect = record_defer
+        interaction.guild.voice_client.disconnect.side_effect = record_disconnect
+        interaction.followup.send = AsyncMock()
+
+        await leave.callback(interaction)
+
+        assert "defer" in call_log
+        assert "disconnect" in call_log
+        assert call_log.index("defer") < call_log.index("disconnect")
+
+    @pytest.mark.asyncio
+    async def test_leave_uses_followup_on_success(self):
+        """/leave 成功時は followup.send() を使うこと（response.send_message ではない）"""
+        interaction = self._make_interaction()
+        interaction.followup.send = AsyncMock()
+
+        await leave.callback(interaction)
+
+        interaction.response.defer.assert_called_once()
+        interaction.followup.send.assert_called_once()
+        interaction.response.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_leave_uses_followup_on_error(self):
+        """/leave でエラーが発生した場合も followup.send() を使うこと"""
+        interaction = self._make_interaction()
+        interaction.guild.voice_client.disconnect.side_effect = Exception("切断エラー")
+        interaction.followup.send = AsyncMock()
+
+        await leave.callback(interaction)
+
+        interaction.response.defer.assert_called_once()
+        interaction.followup.send.assert_called_once()
+        _, kwargs = interaction.followup.send.call_args
+        assert kwargs.get("ephemeral") is True
+
+    @pytest.mark.asyncio
+    async def test_leave_not_connected_returns_immediately(self):
+        """/leave はボイスチャンネルに接続していない場合、defer せずにエラーを返すこと"""
+        interaction = self._make_interaction(has_voice_client=False)
+
+        await leave.callback(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        interaction.response.defer.assert_not_called()
+
