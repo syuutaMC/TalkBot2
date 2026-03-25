@@ -42,4 +42,4 @@ services:
     restart: unless-stopped
     volumes:
       # 設定ファイルの永続化
-      - ../config/config.json:/app/config.json
+      - ../config:/app/config
