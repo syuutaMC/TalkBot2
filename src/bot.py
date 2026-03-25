@@ -7,6 +7,7 @@ from discord.ext import commands
 import asyncio
 import os
 import json
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Optional
@@ -34,6 +35,48 @@ intents.guilds = True
 intents.voice_states = True
 
 
+class DictionaryListView(discord.ui.View):
+    """辞書一覧のページネーションビュー"""
+
+    PER_PAGE = 20
+
+    def __init__(self, entries: list):
+        super().__init__(timeout=60)
+        self.entries = entries
+        self.page = 0
+        self.total_pages = max(1, (len(entries) + self.PER_PAGE - 1) // self.PER_PAGE)
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_button.disabled = self.page == 0
+        self.next_button.disabled = self.page >= self.total_pages - 1
+
+    def _build_embed(self) -> discord.Embed:
+        start = self.page * self.PER_PAGE
+        end = min(start + self.PER_PAGE, len(self.entries))
+        page_entries = self.entries[start:end]
+
+        embed = discord.Embed(title="📖 読み上げ辞書一覧", color=discord.Color.blue())
+        if page_entries:
+            embed.description = "\n".join(f"`{b}` → `{a}`" for b, a in page_entries)
+        else:
+            embed.description = "辞書が空です"
+        embed.set_footer(text=f"ページ {self.page + 1}/{self.total_pages}（全{len(self.entries)}件）")
+        return embed
+
+    @discord.ui.button(label="◀ 前へ", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    @discord.ui.button(label="次へ ▶", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+
 class VoiceBot(commands.Bot):
     """読み上げBot本体"""
     
@@ -59,17 +102,20 @@ class VoiceBot(commands.Bot):
                     self.user_speakers = {int(k): v for k, v in config.get("user_speakers", {}).items()}
                     self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
-                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件）")
+                    self.dictionary: Dict[str, str] = config.get("dictionary", {})
+                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {len(self.dictionary)}件）")
             else:
                 self.user_speakers = {}
                 self.user_speeds = {}
                 self.guild_configs = {}
+                self.dictionary: Dict[str, str] = {}
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
         except Exception as e:
             print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
             self.user_speakers = {}
             self.user_speeds = {}
             self.guild_configs = {}
+            self.dictionary: Dict[str, str] = {}
     
     def _save_config(self):
         """設定ファイルに保存する"""
@@ -78,7 +124,8 @@ class VoiceBot(commands.Bot):
             config = {
                 "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
                 "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
-                "guild_configs": {str(k): v for k, v in self.guild_configs.items()}
+                "guild_configs": {str(k): v for k, v in self.guild_configs.items()},
+                "dictionary": self.dictionary
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
@@ -379,6 +426,13 @@ async def on_message(message: discord.Message):
     if not text or text.startswith(("http://", "https://")):
         text = "URL省略"
     
+    # 辞書による変換（最長一致・単一パスで多重置換を防ぐ）
+    if bot.dictionary:
+        pattern = "|".join(
+            re.escape(k) for k in sorted(bot.dictionary.keys(), key=len, reverse=True)
+        )
+        text = re.sub(pattern, lambda m: bot.dictionary[m.group(0)], text)
+    
     # 長すぎるメッセージは省略
     if len(text) > 500:
         text = text[:500] + "、以下省略"
@@ -455,6 +509,42 @@ async def play_voice_queue(guild: discord.Guild):
     
     finally:
         bot.is_playing[guild_id] = False
+
+
+# 辞書コマンドグループ
+dictionary_group = app_commands.Group(name="dictionary", description="読み上げ辞書の管理")
+
+
+@dictionary_group.command(name="add", description="読み上げ辞書に登録します")
+@app_commands.describe(before="変換前のテキスト", after="変換後のテキスト")
+async def dictionary_add(interaction: discord.Interaction, before: str, after: str):
+    """辞書登録コマンド: before を after に変換する"""
+    bot.dictionary[before] = after
+    bot._save_config()
+    await interaction.response.send_message(f"✓ 辞書に登録しました: `{before}` → `{after}`", ephemeral=True)
+
+
+@dictionary_group.command(name="remove", description="読み上げ辞書から削除します")
+@app_commands.describe(before="削除する変換前テキスト")
+async def dictionary_remove(interaction: discord.Interaction, before: str):
+    """辞書削除コマンド: before の読み方でヒットする場合は削除する"""
+    if before in bot.dictionary:
+        del bot.dictionary[before]
+        bot._save_config()
+        await interaction.response.send_message(f"✓ 辞書から削除しました: `{before}`", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"⚠ `{before}` は辞書に登録されていません", ephemeral=True)
+
+
+@dictionary_group.command(name="list", description="辞書の一覧を表示します（20件ずつ）")
+async def dictionary_list(interaction: discord.Interaction):
+    """辞書一覧表示コマンド（ページネーションUI付き）"""
+    entries = list(bot.dictionary.items())
+    view = DictionaryListView(entries)
+    await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
+
+
+bot.tree.add_command(dictionary_group)
 
 
 def main():
