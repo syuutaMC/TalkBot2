@@ -192,6 +192,9 @@ async def join(interaction: discord.Interaction):
         await interaction.response.send_message("既にボイスチャンネルに接続しています！", ephemeral=True)
         return
     
+    # 接続に時間がかかる場合でもインタラクションが失効しないよう defer する
+    await interaction.response.defer()
+    
     try:
         # ボイスチャンネルに接続
         await channel.connect()
@@ -204,10 +207,10 @@ async def join(interaction: discord.Interaction):
             bot.voice_queues[guild_id] = asyncio.Queue()
             bot.is_playing[guild_id] = False
         
-        await interaction.response.send_message(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
+        await interaction.followup.send(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
         
     except Exception as e:
-        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+        await interaction.followup.send(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="leave", description="ボイスチャンネルから退出します")
@@ -217,6 +220,9 @@ async def leave(interaction: discord.Interaction):
     if not interaction.guild.voice_client:
         await interaction.response.send_message("ボイスチャンネルに接続していません！", ephemeral=True)
         return
+    
+    # 切断に時間がかかる場合でもインタラクションが失効しないよう defer する
+    await interaction.response.defer()
     
     try:
         await interaction.guild.voice_client.disconnect()
@@ -230,10 +236,10 @@ async def leave(interaction: discord.Interaction):
         if guild_id in bot.is_playing:
             del bot.is_playing[guild_id]
         
-        await interaction.response.send_message("✓ ボイスチャンネルから退出しました")
+        await interaction.followup.send("✓ ボイスチャンネルから退出しました")
         
     except Exception as e:
-        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+        await interaction.followup.send(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="help", description="使い方と話者一覧を表示します")
@@ -457,7 +463,11 @@ async def on_message(message: discord.Message):
     })
     
     # 再生タスクを開始（まだ開始していない場合）
+    # create_task() はコルーチンをスケジュールするだけで即座には実行しないため、
+    # is_playing を True に設定してから create_task() を呼ぶことで
+    # 同一ギルドに対して複数タスクが起動されるのを防ぐ
     if not bot.is_playing.get(guild_id, False):
+        bot.is_playing[guild_id] = True
         bot.loop.create_task(play_voice_queue(message.guild))
 
 
@@ -468,6 +478,10 @@ async def play_voice_queue(guild: discord.Guild):
     
     try:
         while True:
+            # ギルドが切断済みの場合（/leave や自動退出でキューが削除された）は終了
+            if guild_id not in bot.voice_queues:
+                break
+
             # キューが空なら終了
             if bot.voice_queues[guild_id].empty():
                 break
