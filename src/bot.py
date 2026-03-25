@@ -389,7 +389,9 @@ async def on_message(message: discord.Message):
     # ユーザーの速度設定を取得（未設定なら1.0）
     speed = bot.user_speeds.get(message.author.id, 1.0)
     
-    # キューに追加
+    # キューに追加（未初期化の場合は初期化する）
+    if guild_id not in bot.voice_queues:
+        bot.voice_queues[guild_id] = asyncio.Queue()
     await bot.voice_queues[guild_id].put({
         "text": text,
         "speaker_id": speaker_id,
