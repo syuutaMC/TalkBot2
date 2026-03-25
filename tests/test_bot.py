@@ -13,7 +13,7 @@ import pytest
 os.environ.setdefault("DISCORD_TOKEN", "dummy_token_for_testing")
 os.environ.setdefault("VOICEVOX_URL", "http://127.0.0.1:50021")
 
-from src.bot import VoiceBot, join, leave
+from src.bot import VoiceBot, join, leave, play_voice_queue
 
 
 class TestSetupHookCommandSync:
@@ -296,4 +296,237 @@ class TestLeaveCommandDeferred:
 
         interaction.response.send_message.assert_called_once()
         interaction.response.defer.assert_not_called()
+
+
+class TestMultiGuildIsolation:
+    """複数ギルドの同時接続における分離・競合状態のテスト"""
+
+    def _setup_bot_state(self, mock_bot, guild_id: int):
+        """指定ギルドの初期状態をモック bot に設定するヘルパー"""
+        import asyncio
+        mock_bot.voice_queues[guild_id] = asyncio.Queue()
+        mock_bot.is_playing[guild_id] = False
+        mock_bot.guild_configs[guild_id] = {"read_channel": 999}
+
+    # ------------------------------------------------------------------
+    # Fix 1: on_message が create_task の前に is_playing を True にすること
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_on_message_sets_is_playing_before_create_task(self):
+        """on_message は create_task() より前に is_playing を True にセットすること。
+        これにより、同一ギルドへの連続メッセージで重複タスクが生成されるのを防ぐ。"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 111222333
+
+        # bot のキュー・フラグを初期化
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+        bot_module.bot.dictionary = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "テスト"
+        mock_message.author.id = 42
+
+        captured_is_playing: list = []
+
+        def fake_create_task(coro):
+            # create_task が呼ばれた瞬間の is_playing の値を記録
+            captured_is_playing.append(bot_module.bot.is_playing.get(guild_id))
+            # コルーチンをキャンセルしてリソースリーク防止
+            coro.close()
+            return MagicMock()
+
+        with patch.object(bot_module.bot, 'process_commands', new_callable=AsyncMock), \
+             patch.object(bot_module.bot, 'loop') as mock_loop:
+            mock_loop.create_task.side_effect = fake_create_task
+            await bot_module.on_message(mock_message)
+
+        # create_task が呼ばれていること
+        assert mock_loop.create_task.call_count == 1
+
+        # create_task が呼ばれた時点で is_playing が True になっていること
+        assert captured_is_playing == [True], (
+            "create_task() 呼び出し前に is_playing が True にセットされていない。"
+            "複数メッセージが届いた場合に重複タスクが生成される可能性がある。"
+        )
+
+        # テスト後のクリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_on_message_does_not_create_duplicate_task_when_already_playing(self):
+        """is_playing が True の場合、create_task() は呼ばれないこと"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 222333444
+
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = True  # 既に再生中
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 888}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+        bot_module.bot.dictionary = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 888
+        mock_message.clean_content = "テスト2"
+        mock_message.author.id = 43
+
+        with patch.object(bot_module.bot, 'process_commands', new_callable=AsyncMock), \
+             patch.object(bot_module.bot, 'loop') as mock_loop:
+            await bot_module.on_message(mock_message)
+
+        # 既に再生中なので create_task は呼ばれないこと
+        mock_loop.create_task.assert_not_called()
+
+        # テスト後のクリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+    # ------------------------------------------------------------------
+    # Fix 2: play_voice_queue がギルド切断後にクラッシュしないこと
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_exits_gracefully_when_queue_deleted(self):
+        """play_voice_queue は実行中にギルドが切断されキューが削除されても
+        KeyError を起こさず正常終了すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 333444555
+
+        # キューにアイテムを1つ入れておく
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        await bot_module.bot.voice_queues[guild_id].put({
+            "text": "テスト",
+            "speaker_id": 1,
+            "speed": 1.0,
+        })
+        bot_module.bot.is_playing[guild_id] = False
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = None  # 切断済み
+
+        # create_audio が呼ばれたタイミングでキューを削除（ギルド切断をシミュレート）
+        async def simulate_disconnect(text, speaker_id, speed):
+            bot_module.bot.voice_queues.pop(guild_id, None)
+            return None  # 切断後は音声データなし
+
+        bot_module.bot.voicevox.create_audio = simulate_disconnect
+
+        # KeyError が発生しないことを確認
+        await play_voice_queue(mock_guild)
+
+        # タスク終了後に is_playing が False になっていること
+        assert bot_module.bot.is_playing.get(guild_id) is False
+
+        # クリーンアップ
+        bot_module.bot.is_playing.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_exits_immediately_when_queue_missing_at_start(self):
+        """play_voice_queue 開始時にキューが存在しない場合、即座に終了すること"""
+        import src.bot as bot_module
+
+        guild_id = 444555666
+
+        # voice_queues にエントリを作らない（切断済み状態）
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing[guild_id] = False
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = None
+
+        # KeyError が発生せず正常終了すること
+        await play_voice_queue(mock_guild)
+
+        assert bot_module.bot.is_playing.get(guild_id) is False
+
+        # クリーンアップ
+        bot_module.bot.is_playing.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_two_guilds_have_independent_queues(self):
+        """2つのギルドのキューが独立していること（一方への操作が他方に影響しない）"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_a = 555666777
+        guild_b = 888999000
+
+        bot_module.bot.voice_queues[guild_a] = asyncio.Queue()
+        bot_module.bot.voice_queues[guild_b] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_a] = False
+        bot_module.bot.is_playing[guild_b] = False
+
+        await bot_module.bot.voice_queues[guild_a].put({"text": "A", "speaker_id": 1, "speed": 1.0})
+        await bot_module.bot.voice_queues[guild_b].put({"text": "B", "speaker_id": 2, "speed": 1.5})
+
+        # Guild A のキューを消去（/leave をシミュレート）
+        del bot_module.bot.voice_queues[guild_a]
+
+        # Guild B のキューは影響を受けないこと
+        assert guild_b in bot_module.bot.voice_queues
+        assert not bot_module.bot.voice_queues[guild_b].empty()
+        item = await bot_module.bot.voice_queues[guild_b].get()
+        assert item["text"] == "B"
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_a, None)
+        bot_module.bot.voice_queues.pop(guild_b, None)
+        bot_module.bot.is_playing.pop(guild_a, None)
+        bot_module.bot.is_playing.pop(guild_b, None)
+
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_resets_is_playing_after_normal_completion(self):
+        """play_voice_queue は通常完了後（キュー空）に is_playing を False にリセットすること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 777888999
+
+        # キューを空で用意（アイテムなし）
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = True  # タスク開始前の状態
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = None
+
+        await play_voice_queue(mock_guild)
+
+        # 正常終了後に is_playing が False にリセットされていること
+        assert bot_module.bot.is_playing.get(guild_id) is False
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+
+
 

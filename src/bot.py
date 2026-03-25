@@ -463,7 +463,11 @@ async def on_message(message: discord.Message):
     })
     
     # 再生タスクを開始（まだ開始していない場合）
+    # create_task() はコルーチンをスケジュールするだけで即座には実行しないため、
+    # is_playing を True に設定してから create_task() を呼ぶことで
+    # 同一ギルドに対して複数タスクが起動されるのを防ぐ
     if not bot.is_playing.get(guild_id, False):
+        bot.is_playing[guild_id] = True
         bot.loop.create_task(play_voice_queue(message.guild))
 
 
@@ -474,6 +478,10 @@ async def play_voice_queue(guild: discord.Guild):
     
     try:
         while True:
+            # ギルドが切断済みの場合（/leave や自動退出でキューが削除された）は終了
+            if guild_id not in bot.voice_queues:
+                break
+
             # キューが空なら終了
             if bot.voice_queues[guild_id].empty():
                 break
