@@ -177,6 +177,21 @@
     }
     canvas { width: 100% !important; }
 
+    /* ===== 粒度セレクター ===== */
+    .gran-btns { display: flex; gap: 0.4rem; }
+    .gran-btn {
+      background: #1e293b;
+      color: #94a3b8;
+      border: 1px solid #334155;
+      border-radius: 0.4rem;
+      padding: 0.25rem 0.65rem;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .gran-btn:hover { background: #263348; color: #e2e8f0; }
+    .gran-btn.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+
     /* ===== フッター ===== */
     footer {
       text-align: center;
@@ -228,17 +243,24 @@
   </div>
 
   <!-- ===== メトリクスグラフ ===== -->
-  <div class="section-title">📈 メトリクス（過去 30 日間）</div>
+  <div class="section-title" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <span id="metricsTitle">📈 メトリクス（過去 30 日間）</span>
+    <div class="gran-btns">
+      <button class="gran-btn active" data-gran="day"    onclick="setGranularity('day')">日単位</button>
+      <button class="gran-btn"        data-gran="hour"   onclick="setGranularity('hour')">時間単位</button>
+      <button class="gran-btn"        data-gran="minute" onclick="setGranularity('minute')">分単位</button>
+    </div>
+  </div>
   <div class="chart-grid">
 
     <div class="chart-card">
-      <div class="chart-title">⚡ VOICEVOX レイテンシ（日平均 ms）</div>
+      <div class="chart-title" id="latencyChartTitle">⚡ VOICEVOX レイテンシ（日平均 ms）</div>
       <canvas id="chartLatency" height="200"></canvas>
       <div class="chart-sub" id="latencyAvg"></div>
     </div>
 
     <div class="chart-card">
-      <div class="chart-title">❌ 音声生成エラー数（日別件数）</div>
+      <div class="chart-title" id="errorsChartTitle">❌ 音声生成エラー数（日別件数）</div>
       <canvas id="chartErrors" height="200"></canvas>
       <div class="chart-sub" id="errorsTotal"></div>
     </div>
@@ -374,6 +396,45 @@
     });
   }
 
+  // ---------- 粒度設定 ----------
+  let currentGranularity = "day";
+
+  const GRANULARITY_INFO = {
+    "minute": {
+      period: "過去 60 分間",
+      latencyTitle: "⚡ VOICEVOX レイテンシ（分平均 ms）",
+      errorsTitle:  "❌ 音声生成エラー数（分別件数）",
+      avgLabel:     "60 分平均",
+      totalLabel:   "60 分合計",
+    },
+    "hour": {
+      period: "過去 24 時間",
+      latencyTitle: "⚡ VOICEVOX レイテンシ（時間平均 ms）",
+      errorsTitle:  "❌ 音声生成エラー数（時間別件数）",
+      avgLabel:     "24 時間平均",
+      totalLabel:   "24 時間合計",
+    },
+    "day": {
+      period: "過去 30 日間",
+      latencyTitle: "⚡ VOICEVOX レイテンシ（日平均 ms）",
+      errorsTitle:  "❌ 音声生成エラー数（日別件数）",
+      avgLabel:     "30 日平均",
+      totalLabel:   "30 日合計",
+    },
+  };
+
+  function setGranularity(gran) {
+    currentGranularity = gran;
+    const info = GRANULARITY_INFO[gran] || GRANULARITY_INFO["day"];
+    document.querySelectorAll(".gran-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.gran === gran);
+    });
+    document.getElementById("metricsTitle").textContent        = `📈 メトリクス（${info.period}）`;
+    document.getElementById("latencyChartTitle").textContent   = info.latencyTitle;
+    document.getElementById("errorsChartTitle").textContent    = info.errorsTitle;
+    loadMetrics();
+  }
+
   // ---------- ヘルパー ----------
   async function fetchJSON(url) {
     const res = await fetch(url);
@@ -387,21 +448,22 @@
   // ---------- メトリクスグラフ ----------
   async function loadMetrics() {
     try {
-      const d = await fetchJSON("/api/metrics");
+      const info = GRANULARITY_INFO[currentGranularity] || GRANULARITY_INFO["day"];
+      const d = await fetchJSON(`/api/metrics?granularity=${currentGranularity}`);
 
       // レイテンシ
       chartLatency.data.labels   = d.latency.labels;
       chartLatency.data.datasets[0].data = d.latency.values;
       chartLatency.update();
       document.getElementById("latencyAvg").textContent =
-        d.latency.avg_ms != null ? `30 日平均: ${d.latency.avg_ms} ms` : "データなし";
+        d.latency.avg_ms != null ? `${info.avgLabel}: ${Number(d.latency.avg_ms).toFixed(1)} ms` : "データなし";
 
       // エラー
       chartErrors.data.labels  = d.errors.labels;
       chartErrors.data.datasets[0].data = d.errors.values;
       chartErrors.update();
       document.getElementById("errorsTotal").textContent =
-        `30 日合計: ${d.errors.total} 件`;
+        `${info.totalLabel}: ${d.errors.total} 件`;
 
       // コマンド
       chartCommands.data.labels  = d.commands.labels;

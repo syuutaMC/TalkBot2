@@ -244,3 +244,126 @@ class TestGetMetricsSummary:
         cmd_map = dict(zip(summary["commands"]["labels"], summary["commands"]["values"]))
         assert cmd_map["join"] == 2
         assert cmd_map["leave"] == 1
+
+
+# ---------------------------------------------------------------------------
+# get_metrics_summary の granularity パラメータのテスト
+# ---------------------------------------------------------------------------
+
+class TestGetMetricsSummaryGranularity:
+    """get_metrics_summary の granularity パラメータのテスト"""
+
+    def test_summary_includes_granularity_key(self, tmp_path):
+        """返り値に granularity キーがあること"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary()
+        assert "granularity" in summary
+        assert summary["granularity"] == "day"
+
+    def test_granularity_day_returns_30_labels(self, tmp_path):
+        """granularity='day' の場合 labels が 30 件であること"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="day")
+        assert len(summary["latency"]["labels"]) == RETENTION_DAYS
+        assert len(summary["errors"]["labels"]) == RETENTION_DAYS
+        assert summary["granularity"] == "day"
+
+    def test_granularity_hour_returns_24_labels(self, tmp_path):
+        """granularity='hour' の場合 labels が 24 件であること"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="hour")
+        assert len(summary["latency"]["labels"]) == 24
+        assert len(summary["errors"]["labels"]) == 24
+        assert summary["granularity"] == "hour"
+
+    def test_granularity_minute_returns_60_labels(self, tmp_path):
+        """granularity='minute' の場合 labels が 60 件であること"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="minute")
+        assert len(summary["latency"]["labels"]) == 60
+        assert len(summary["errors"]["labels"]) == 60
+        assert summary["granularity"] == "minute"
+
+    def test_invalid_granularity_falls_back_to_day(self, tmp_path):
+        """不正な granularity は 'day' にフォールバックすること"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="week")
+        assert len(summary["latency"]["labels"]) == RETENTION_DAYS
+        assert summary["granularity"] == "day"
+
+    def test_granularity_minute_aggregates_same_minute(self, tmp_path):
+        """granularity='minute' で同じ分のデータが正しく集計されること"""
+        f = tmp_path / "metrics.json"
+        now_ts = time.time()
+        content = {
+            "latency": [
+                {"ts": now_ts, "ms": 100.0},
+                {"ts": now_ts - 30, "ms": 200.0},  # 同じ分（30秒前）
+            ],
+            "errors": [{"ts": now_ts}],
+            "commands": {},
+        }
+        f.write_text(json.dumps(content), encoding="utf-8")
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="minute")
+        assert summary["latency"]["avg_ms"] == 150.0
+        assert summary["errors"]["total"] == 1
+
+    def test_granularity_hour_aggregates_same_hour(self, tmp_path):
+        """granularity='hour' で同じ時間のデータが正しく集計されること"""
+        f = tmp_path / "metrics.json"
+        now_ts = time.time()
+        content = {
+            "latency": [
+                {"ts": now_ts, "ms": 100.0},
+                {"ts": now_ts - 1800, "ms": 200.0},  # 同じ時間（30分前）
+            ],
+            "errors": [{"ts": now_ts}, {"ts": now_ts - 1800}],
+            "commands": {},
+        }
+        f.write_text(json.dumps(content), encoding="utf-8")
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="hour")
+        assert summary["latency"]["avg_ms"] == 150.0
+        assert summary["errors"]["total"] == 2
+
+    def test_granularity_minute_excludes_old_data(self, tmp_path):
+        """granularity='minute' で 60 分より古いデータが含まれないこと"""
+        f = tmp_path / "metrics.json"
+        now_ts = time.time()
+        content = {
+            "latency": [
+                {"ts": now_ts, "ms": 100.0},
+                {"ts": now_ts - 7200, "ms": 999.0},  # 2時間前（対象外）
+            ],
+            "errors": [{"ts": now_ts - 7200}],  # 2時間前（対象外）
+            "commands": {},
+        }
+        f.write_text(json.dumps(content), encoding="utf-8")
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="minute")
+        assert summary["latency"]["avg_ms"] == 100.0
+        assert summary["errors"]["total"] == 0
+
+    def test_granularity_hour_excludes_old_data(self, tmp_path):
+        """granularity='hour' で 24 時間より古いデータが含まれないこと"""
+        f = tmp_path / "metrics.json"
+        now_ts = time.time()
+        content = {
+            "latency": [
+                {"ts": now_ts, "ms": 100.0},
+                {"ts": now_ts - 90000, "ms": 999.0},  # 25時間前（対象外）
+            ],
+            "errors": [{"ts": now_ts - 90000}],  # 25時間前（対象外）
+            "commands": {},
+        }
+        f.write_text(json.dumps(content), encoding="utf-8")
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="hour")
+        assert summary["latency"]["avg_ms"] == 100.0
+        assert summary["errors"]["total"] == 0
