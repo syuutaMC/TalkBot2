@@ -328,12 +328,13 @@
     <table>
       <thead>
         <tr>
+          <th>ギルドID</th>
           <th>元のテキスト</th>
           <th>読み替え後</th>
         </tr>
       </thead>
       <tbody id="dictBody">
-        <tr class="empty-row"><td colspan="2">読み込み中…</td></tr>
+        <tr class="empty-row"><td colspan="3">読み込み中…</td></tr>
       </tbody>
     </table>
   </div>
@@ -514,12 +515,17 @@
 
       // 辞書テーブル
       const dictBody = document.getElementById("dictBody");
-      const dictEntries = Object.entries(d.dictionary || {});
-      if (dictEntries.length === 0) {
-        empty(dictBody, 2);
+      const dictRows = [];
+      for (const [gid, cfg] of Object.entries(d.guild_configs || {})) {
+        for (const [k, v] of Object.entries(cfg.dictionary || {})) {
+          dictRows.push([gid, k, v]);
+        }
+      }
+      if (dictRows.length === 0) {
+        empty(dictBody, 3);
       } else {
-        dictBody.innerHTML = dictEntries.map(([k, v]) =>
-          `<tr><td>${escHtml(k)}</td><td>${escHtml(v)}</td></tr>`
+        dictBody.innerHTML = dictRows.map(([gid, k, v]) =>
+          `<tr><td>${escHtml(gid)}</td><td>${escHtml(k)}</td><td>${escHtml(v)}</td></tr>`
         ).join("");
       }
 
