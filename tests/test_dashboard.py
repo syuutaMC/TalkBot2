@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.dashboard import (
     _fetch_voicevox,
     create_app,
+    handle_api_metrics,
     handle_api_status,
     handle_api_voicevox_speakers,
     handle_api_voicevox_status,
@@ -270,3 +271,25 @@ class TestCreateApp:
         assert "/api/status" in routes
         assert "/api/voicevox/status" in routes
         assert "/api/voicevox/speakers" in routes
+        assert "/api/metrics" in routes
+
+
+# ---------------------------------------------------------------------------
+# handle_api_metrics のテスト
+# ---------------------------------------------------------------------------
+
+class TestHandleApiMetrics:
+    """GET /api/metrics のテスト"""
+
+    @pytest.mark.asyncio
+    async def test_metrics_returns_json_with_required_keys(self, tmp_path):
+        """メトリクス API が latency / errors / commands キーを含む JSON を返すこと"""
+        mock_summary = {
+            "latency": {"labels": [], "values": [], "avg_ms": None},
+            "errors":  {"labels": [], "values": [], "total": 0},
+            "commands": {"labels": [], "values": []},
+        }
+        request = MagicMock()
+        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)):
+            response = await handle_api_metrics(request)
+        assert response.status == 200
