@@ -218,7 +218,7 @@
     <div class="card">
       <div class="label">参加サーバー数</div>
       <div class="value" id="guildCount">—</div>
-      <div class="sub">設定済みギルド</div>
+      <div class="sub" id="guildCountSub">設定済みギルド</div>
     </div>
     <div class="card">
       <div class="label">ユーザー数</div>
@@ -229,6 +229,16 @@
       <div class="label">辞書登録数</div>
       <div class="value" id="dictCount">—</div>
       <div class="sub">読み替えルール</div>
+    </div>
+    <div class="card">
+      <div class="label">読み上げ件数</div>
+      <div class="value" id="ttsCount">—</div>
+      <div class="sub" id="ttsCountSub">期間合計</div>
+    </div>
+    <div class="card">
+      <div class="label">コマンド総使用回数</div>
+      <div class="value" id="cmdTotalCount">—</div>
+      <div class="sub" id="cmdTotalCountSub">期間合計</div>
     </div>
   </div>
 
@@ -266,6 +276,12 @@
     </div>
 
     <div class="chart-card">
+      <div class="chart-title" id="ttsChartTitle">📢 読み上げ件数（日別）</div>
+      <canvas id="chartTtsRequests" height="200"></canvas>
+      <div class="chart-sub" id="ttsTotal"></div>
+    </div>
+
+    <div class="chart-card">
       <div class="chart-title">🎮 コマンド利用回数（過去 30 日間）</div>
       <canvas id="chartCommands" height="200"></canvas>
     </div>
@@ -297,10 +313,11 @@
         <tr>
           <th>ギルド ID</th>
           <th>読み上げチャンネル ID</th>
+          <th>辞書件数</th>
         </tr>
       </thead>
       <tbody id="guildsBody">
-        <tr class="empty-row"><td colspan="2">読み込み中…</td></tr>
+        <tr class="empty-row"><td colspan="3">読み込み中…</td></tr>
       </tbody>
     </table>
   </div>
@@ -371,12 +388,14 @@
   // ---------- チャートインスタンス ----------
   let chartLatency = null;
   let chartErrors  = null;
+  let chartTtsRequests = null;
   let chartCommands = null;
 
   function initCharts() {
-    const latencyCtx  = document.getElementById("chartLatency").getContext("2d");
-    const errorsCtx   = document.getElementById("chartErrors").getContext("2d");
-    const commandsCtx = document.getElementById("chartCommands").getContext("2d");
+    const latencyCtx      = document.getElementById("chartLatency").getContext("2d");
+    const errorsCtx       = document.getElementById("chartErrors").getContext("2d");
+    const ttsRequestsCtx  = document.getElementById("chartTtsRequests").getContext("2d");
+    const commandsCtx     = document.getElementById("chartCommands").getContext("2d");
 
     chartLatency = new Chart(latencyCtx, {
       type: "line",
@@ -387,6 +406,12 @@
     chartErrors = new Chart(errorsCtx, {
       type: "bar",
       data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(239,68,68,0.7)", borderColor: "#ef4444", borderWidth: 1 }] },
+      options: { ...CHART_OPTS_BASE, scales: { ...CHART_OPTS_BASE.scales, y: { ...CHART_OPTS_BASE.scales.y, title: { display: true, text: "件数", color: "#64748b", font: { size: 10 } } } } }
+    });
+
+    chartTtsRequests = new Chart(ttsRequestsCtx, {
+      type: "bar",
+      data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(251,191,36,0.7)", borderColor: "#fbbf24", borderWidth: 1 }] },
       options: { ...CHART_OPTS_BASE, scales: { ...CHART_OPTS_BASE.scales, y: { ...CHART_OPTS_BASE.scales.y, title: { display: true, text: "件数", color: "#64748b", font: { size: 10 } } } } }
     });
 
@@ -405,6 +430,7 @@
       period: "過去 60 分間",
       latencyTitle: "⚡ VOICEVOX レイテンシ（分平均 ms）",
       errorsTitle:  "❌ 音声生成エラー数（分別件数）",
+      ttsTitle:     "📢 読み上げ件数（分別）",
       avgLabel:     "60 分平均",
       totalLabel:   "60 分合計",
     },
@@ -412,6 +438,7 @@
       period: "過去 24 時間",
       latencyTitle: "⚡ VOICEVOX レイテンシ（時間平均 ms）",
       errorsTitle:  "❌ 音声生成エラー数（時間別件数）",
+      ttsTitle:     "📢 読み上げ件数（時間別）",
       avgLabel:     "24 時間平均",
       totalLabel:   "24 時間合計",
     },
@@ -419,6 +446,7 @@
       period: "過去 30 日間",
       latencyTitle: "⚡ VOICEVOX レイテンシ（日平均 ms）",
       errorsTitle:  "❌ 音声生成エラー数（日別件数）",
+      ttsTitle:     "📢 読み上げ件数（日別）",
       avgLabel:     "30 日平均",
       totalLabel:   "30 日合計",
     },
@@ -433,6 +461,7 @@
     document.getElementById("metricsTitle").textContent        = `📈 メトリクス（${info.period}）`;
     document.getElementById("latencyChartTitle").textContent   = info.latencyTitle;
     document.getElementById("errorsChartTitle").textContent    = info.errorsTitle;
+    document.getElementById("ttsChartTitle").textContent       = info.ttsTitle;
     loadMetrics();
   }
 
@@ -456,8 +485,15 @@
       chartLatency.data.labels   = d.latency.labels;
       chartLatency.data.datasets[0].data = d.latency.values;
       chartLatency.update();
-      document.getElementById("latencyAvg").textContent =
-        d.latency.avg_ms != null ? `${info.avgLabel}: ${Number(d.latency.avg_ms).toFixed(1)} ms` : "データなし";
+      if (d.latency.avg_ms != null) {
+        const minMax = d.latency.min_ms != null
+          ? ` / min: ${Number(d.latency.min_ms).toFixed(1)} ms / max: ${Number(d.latency.max_ms).toFixed(1)} ms`
+          : "";
+        document.getElementById("latencyAvg").textContent =
+          `${info.avgLabel}: ${Number(d.latency.avg_ms).toFixed(1)} ms${minMax}`;
+      } else {
+        document.getElementById("latencyAvg").textContent = "データなし";
+      }
 
       // エラー
       chartErrors.data.labels  = d.errors.labels;
@@ -465,6 +501,23 @@
       chartErrors.update();
       document.getElementById("errorsTotal").textContent =
         `${info.totalLabel}: ${d.errors.total} 件`;
+
+      // 読み上げ件数
+      if (d.tts_requests) {
+        document.getElementById("ttsChartTitle").textContent = info.ttsTitle;
+        chartTtsRequests.data.labels  = d.tts_requests.labels;
+        chartTtsRequests.data.datasets[0].data = d.tts_requests.values;
+        chartTtsRequests.update();
+        document.getElementById("ttsTotal").textContent =
+          `${info.totalLabel}: ${d.tts_requests.total} 件`;
+        document.getElementById("ttsCount").textContent = d.tts_requests.total;
+        document.getElementById("ttsCountSub").textContent = info.period;
+      }
+
+      // コマンド総使用回数カード
+      const cmdTotal = d.commands.values.reduce((a, b) => a + b, 0);
+      document.getElementById("cmdTotalCount").textContent = cmdTotal;
+      document.getElementById("cmdTotalCountSub").textContent = info.period;
 
       // コマンド
       chartCommands.data.labels  = d.commands.labels;
@@ -488,12 +541,16 @@
       const guildsBody = document.getElementById("guildsBody");
       const entries = Object.entries(d.guild_configs || {});
       if (entries.length === 0) {
-        empty(guildsBody, 2);
+        empty(guildsBody, 3);
       } else {
         guildsBody.innerHTML = entries.map(([gid, cfg]) =>
-          `<tr><td>${gid}</td><td>${cfg.read_channel ?? "—"}</td></tr>`
+          `<tr><td>${gid}</td><td>${cfg.read_channel ?? "—"}</td><td>${Object.keys(cfg.dictionary || {}).length}</td></tr>`
         ).join("");
       }
+
+      // ギルドカード サブテキスト（参加中 N / 読み上げ設定済み N）
+      document.getElementById("guildCountSub").textContent =
+        `うち読み上げ設定済み: ${entries.length}`;
 
       // ユーザー設定テーブル
       const usersBody = document.getElementById("usersBody");

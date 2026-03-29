@@ -538,7 +538,8 @@ async def play_voice_queue(guild: discord.Guild):
                 continue
             
             metrics.record_latency(elapsed_ms)
-            
+            metrics.record_tts_request()
+
             # 一時ファイルに保存
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_file.write(audio_data)

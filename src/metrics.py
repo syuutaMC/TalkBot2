@@ -26,7 +26,7 @@ def _load_metrics_sync() -> dict:
                 return json.load(f)
         except Exception:
             pass
-    return {"latency": [], "errors": [], "commands": {}}
+    return {"latency": [], "errors": [], "tts_requests": [], "commands": {}}
 
 
 def _save_metrics_sync(data: dict) -> None:
@@ -46,6 +46,7 @@ def _cleanup_old_data(data: dict) -> dict:
     cutoff = _cutoff_timestamp()
     data["latency"] = [p for p in data.get("latency", []) if p["ts"] >= cutoff]
     data["errors"] = [p for p in data.get("errors", []) if p["ts"] >= cutoff]
+    data["tts_requests"] = [p for p in data.get("tts_requests", []) if p["ts"] >= cutoff]
     commands = data.get("commands", {})
     for cmd in list(commands.keys()):
         commands[cmd] = [e for e in commands[cmd] if e["ts"] >= cutoff]
@@ -73,6 +74,17 @@ def record_error() -> None:
         _save_metrics_sync(data)
     except Exception as e:
         print(f"メトリクス記録エラー (error): {e}")
+
+
+def record_tts_request() -> None:
+    """音声読み上げリクエストを 1 件記録する"""
+    try:
+        data = _load_metrics_sync()
+        data = _cleanup_old_data(data)
+        data.setdefault("tts_requests", []).append({"ts": time.time()})
+        _save_metrics_sync(data)
+    except Exception as e:
+        print(f"メトリクス記録エラー (tts_request): {e}")
 
 
 def record_command(command_name: str) -> None:
@@ -150,6 +162,8 @@ def get_metrics_summary(granularity: str = "day") -> dict:
     avg_ms: Optional[float] = (
         round(sum(all_latencies) / len(all_latencies), 1) if all_latencies else None
     )
+    min_ms: Optional[float] = round(min(all_latencies), 1) if all_latencies else None
+    max_ms: Optional[float] = round(max(all_latencies), 1) if all_latencies else None
 
     # ----- エラー（各バケットの件数） -----
     errors_by_bucket: dict[str, int] = {k: 0 for k in keys}
@@ -159,6 +173,15 @@ def get_metrics_summary(granularity: str = "day") -> dict:
             errors_by_bucket[k] += 1
 
     error_values = [errors_by_bucket[k] for k in keys]
+
+    # ----- 読み上げリクエスト数（各バケットの件数） -----
+    tts_by_bucket: dict[str, int] = {k: 0 for k in keys}
+    for point in data.get("tts_requests", []):
+        k = _ts_to_key(point["ts"])
+        if k in key_set:
+            tts_by_bucket[k] += 1
+
+    tts_values = [tts_by_bucket[k] for k in keys]
 
     # ----- コマンド使用回数 -----
     commands = data.get("commands", {})
@@ -170,11 +193,18 @@ def get_metrics_summary(granularity: str = "day") -> dict:
             "labels": labels,
             "values": latency_values,
             "avg_ms": avg_ms,
+            "min_ms": min_ms,
+            "max_ms": max_ms,
         },
         "errors": {
             "labels": labels,
             "values": error_values,
             "total": sum(error_values),
+        },
+        "tts_requests": {
+            "labels": labels,
+            "values": tts_values,
+            "total": sum(tts_values),
         },
         "commands": {
             "labels": command_labels,
