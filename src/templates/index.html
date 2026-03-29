@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalkBot2 ダッシュボード</title>
+  <style>
+    /* ===== リセット & ベース ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    /* ===== ヘッダー ===== */
+    header {
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header h1 { font-size: 1.5rem; font-weight: 700; color: #f1f5f9; }
+    header .badge {
+      background: #6366f1;
+      color: #fff;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 9999px;
+    }
+    .last-updated {
+      margin-left: auto;
+      font-size: 0.8rem;
+      color: #64748b;
+    }
+
+    /* ===== メインレイアウト ===== */
+    main { padding: 2rem; max-width: 1400px; margin: 0 auto; }
+
+    /* ===== セクション見出し ===== */
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+      margin-top: 2rem;
+    }
+    .section-title:first-child { margin-top: 0; }
+
+    /* ===== カードグリッド ===== */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+    }
+    .card .label { font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.5rem; }
+    .card .value { font-size: 2rem; font-weight: 700; color: #f1f5f9; }
+    .card .sub   { font-size: 0.75rem; color: #64748b; margin-top: 0.25rem; }
+
+    /* ===== ステータスバッジ ===== */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.3rem 0.8rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .status-badge.ok  { background: #14532d; color: #86efac; }
+    .status-badge.err { background: #7f1d1d; color: #fca5a5; }
+    .status-badge.loading { background: #1e3a5f; color: #93c5fd; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot.ok  { background: #4ade80; }
+    .dot.err { background: #f87171; }
+    .dot.loading { background: #60a5fa; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ===== テーブル ===== */
+    .table-wrap {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.75rem;
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th {
+      background: #0f172a;
+      padding: 0.75rem 1rem;
+      text-align: left;
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    td {
+      padding: 0.75rem 1rem;
+      border-top: 1px solid #334155;
+      color: #cbd5e1;
+    }
+    tr:hover td { background: #263348; }
+    .empty-row td { text-align: center; color: #475569; padding: 2rem; }
+
+    /* ===== VOICEVOX セクション ===== */
+    .vv-status-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.75rem;
+      padding: 1rem 1.5rem;
+    }
+    .vv-url { font-size: 0.85rem; color: #64748b; margin-left: auto; font-family: monospace; }
+
+    /* ===== レスポンスコード表示 ===== */
+    pre {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 0.75rem;
+      padding: 1rem;
+      font-size: 0.78rem;
+      color: #a5f3fc;
+      overflow-x: auto;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    /* ===== リフレッシュボタン ===== */
+    .btn-refresh {
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 0.5rem;
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-refresh:hover { background: #4f46e5; }
+
+    /* ===== フッター ===== */
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: #475569;
+      font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 TalkBot2</h1>
+  <span class="badge">ダッシュボード</span>
+  <span class="last-updated" id="lastUpdated">読み込み中…</span>
+  <button class="btn-refresh" onclick="loadAll()">↻ 更新</button>
+</header>
+
+<main>
+
+  <!-- ===== Bot 利用状況 ===== -->
+  <div class="section-title">📊 Bot 利用状況</div>
+  <div class="cards">
+    <div class="card">
+      <div class="label">参加サーバー数</div>
+      <div class="value" id="guildCount">—</div>
+      <div class="sub">設定済みギルド</div>
+    </div>
+    <div class="card">
+      <div class="label">ユーザー数</div>
+      <div class="value" id="userCount">—</div>
+      <div class="sub">声設定済みユーザー</div>
+    </div>
+    <div class="card">
+      <div class="label">辞書登録数</div>
+      <div class="value" id="dictCount">—</div>
+      <div class="sub">読み替えルール</div>
+    </div>
+  </div>
+
+  <!-- ===== VOICEVOX API ステータス ===== -->
+  <div class="section-title">🔊 VOICEVOX Engine</div>
+  <div class="vv-status-row">
+    <div id="vvStatusBadge" class="status-badge loading">
+      <span class="dot loading"></span>確認中…
+    </div>
+    <span id="vvVersion" style="color:#94a3b8; font-size:0.85rem;"></span>
+    <span class="vv-url" id="vvUrl"></span>
+  </div>
+
+  <!-- ===== 話者一覧 ===== -->
+  <div class="section-title" style="margin-top:1.5rem;">🎤 利用可能な話者</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>話者 ID</th>
+          <th>キャラクター名</th>
+          <th>スタイル名</th>
+        </tr>
+      </thead>
+      <tbody id="speakersBody">
+        <tr class="empty-row"><td colspan="3">読み込み中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== ギルド設定 ===== -->
+  <div class="section-title">🏰 ギルド設定</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ギルド ID</th>
+          <th>読み上げチャンネル ID</th>
+        </tr>
+      </thead>
+      <tbody id="guildsBody">
+        <tr class="empty-row"><td colspan="2">読み込み中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== ユーザー設定 ===== -->
+  <div class="section-title">👤 ユーザー設定</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ユーザー ID</th>
+          <th>話者 ID</th>
+          <th>読み上げ速度</th>
+        </tr>
+      </thead>
+      <tbody id="usersBody">
+        <tr class="empty-row"><td colspan="3">読み込み中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== 辞書 ===== -->
+  <div class="section-title">📖 読み替え辞書</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>元のテキスト</th>
+          <th>読み替え後</th>
+        </tr>
+      </thead>
+      <tbody id="dictBody">
+        <tr class="empty-row"><td colspan="2">読み込み中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== API レスポンス確認 ===== -->
+  <div class="section-title">🔍 VOICEVOX API レスポンス</div>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.75rem;">
+    <button class="btn-refresh" onclick="showApiResponse('/api/voicevox/status')">version</button>
+    <button class="btn-refresh" onclick="showApiResponse('/api/voicevox/speakers')">speakers</button>
+    <button class="btn-refresh" onclick="showApiResponse('/api/status')">bot status</button>
+  </div>
+  <pre id="apiResponseBox">← 上のボタンを押すと API レスポンスを表示します</pre>
+
+</main>
+
+<footer>TalkBot2 Dashboard — 自動更新: 30 秒ごと</footer>
+
+<script>
+  // ---------- ヘルパー ----------
+  async function fetchJSON(url) {
+    const res = await fetch(url);
+    return res.json();
+  }
+
+  function empty(tbody, cols, msg = "データなし") {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="${cols}">${msg}</td></tr>`;
+  }
+
+  // ---------- Bot ステータス ----------
+  async function loadBotStatus() {
+    try {
+      const d = await fetchJSON("/api/status");
+      document.getElementById("guildCount").textContent = d.guild_count;
+      document.getElementById("userCount").textContent  = d.user_count;
+      document.getElementById("dictCount").textContent  = d.dictionary_count;
+
+      // ギルド設定テーブル
+      const guildsBody = document.getElementById("guildsBody");
+      const entries = Object.entries(d.guild_configs || {});
+      if (entries.length === 0) {
+        empty(guildsBody, 2);
+      } else {
+        guildsBody.innerHTML = entries.map(([gid, cfg]) =>
+          `<tr><td>${gid}</td><td>${cfg.read_channel ?? "—"}</td></tr>`
+        ).join("");
+      }
+
+      // ユーザー設定テーブル
+      const usersBody = document.getElementById("usersBody");
+      const uids = [...new Set([
+        ...Object.keys(d.user_speakers || {}),
+        ...Object.keys(d.user_speeds   || {}),
+      ])];
+      if (uids.length === 0) {
+        empty(usersBody, 3);
+      } else {
+        usersBody.innerHTML = uids.map(uid =>
+          `<tr>
+            <td>${uid}</td>
+            <td>${d.user_speakers?.[uid] ?? "—"}</td>
+            <td>${d.user_speeds?.[uid]   ?? "—"}</td>
+          </tr>`
+        ).join("");
+      }
+
+      // 辞書テーブル
+      const dictBody = document.getElementById("dictBody");
+      const dictEntries = Object.entries(d.dictionary || {});
+      if (dictEntries.length === 0) {
+        empty(dictBody, 2);
+      } else {
+        dictBody.innerHTML = dictEntries.map(([k, v]) =>
+          `<tr><td>${escHtml(k)}</td><td>${escHtml(v)}</td></tr>`
+        ).join("");
+      }
+
+    } catch (e) {
+      console.error("Bot ステータス取得失敗:", e);
+    }
+  }
+
+  // ---------- VOICEVOX ステータス ----------
+  async function loadVoicevoxStatus() {
+    const badge   = document.getElementById("vvStatusBadge");
+    const vvVer   = document.getElementById("vvVersion");
+    const vvUrl   = document.getElementById("vvUrl");
+    try {
+      const d = await fetchJSON("/api/voicevox/status");
+      vvUrl.textContent = d.voicevox_url;
+      if (d.version?.status === "ok") {
+        badge.className = "status-badge ok";
+        badge.innerHTML = '<span class="dot ok"></span>稼働中';
+        vvVer.textContent = "v" + d.version.data;
+      } else {
+        badge.className = "status-badge err";
+        badge.innerHTML = '<span class="dot err"></span>接続エラー';
+        vvVer.textContent = d.version?.message ?? "";
+      }
+    } catch (e) {
+      badge.className = "status-badge err";
+      badge.innerHTML = '<span class="dot err"></span>取得失敗';
+    }
+  }
+
+  // ---------- 話者一覧 ----------
+  async function loadSpeakers() {
+    const tbody = document.getElementById("speakersBody");
+    try {
+      const d = await fetchJSON("/api/voicevox/speakers");
+      if (d.status !== "ok" || !d.data?.length) {
+        empty(tbody, 3, d.message ?? "話者を取得できませんでした");
+        return;
+      }
+      const rows = [];
+      for (const speaker of d.data) {
+        for (const style of (speaker.styles || [])) {
+          rows.push(`<tr>
+            <td>${style.id}</td>
+            <td>${escHtml(speaker.name)}</td>
+            <td>${escHtml(style.name)}</td>
+          </tr>`);
+        }
+      }
+      tbody.innerHTML = rows.join("");
+    } catch (e) {
+      empty(tbody, 4, "読み込みエラー");
+    }
+  }
+
+  // ---------- API レスポンス表示 ----------
+  async function showApiResponse(url) {
+    const box = document.getElementById("apiResponseBox");
+    box.textContent = "読み込み中…";
+    try {
+      const res  = await fetch(url);
+      const json = await res.json();
+      box.textContent = JSON.stringify(json, null, 2);
+    } catch (e) {
+      box.textContent = "エラー: " + e.message;
+    }
+  }
+
+  // ---------- 全読み込み ----------
+  async function loadAll() {
+    await Promise.all([loadBotStatus(), loadVoicevoxStatus(), loadSpeakers()]);
+    document.getElementById("lastUpdated").textContent =
+      "最終更新: " + new Date().toLocaleTimeString("ja-JP");
+  }
+
+  // ---------- HTML エスケープ ----------
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;");
+  }
+
+  // 初回読み込み + 30 秒ごと自動更新
+  loadAll();
+  setInterval(loadAll, 30000);
+</script>
+</body>
+</html>
