@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 from typing import Dict, Optional
 import tempfile
 
+import time
+
 from src.voicevox_client import VoicevoxClient
+from src import metrics
 
 # 環境変数の読み込み
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
@@ -207,6 +210,7 @@ async def join(interaction: discord.Interaction):
             bot.voice_queues[guild_id] = asyncio.Queue()
             bot.is_playing[guild_id] = False
         
+        metrics.record_command("join")
         await interaction.followup.send(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
         
     except Exception as e:
@@ -236,6 +240,7 @@ async def leave(interaction: discord.Interaction):
         if guild_id in bot.is_playing:
             del bot.is_playing[guild_id]
         
+        metrics.record_command("leave")
         await interaction.followup.send("✓ ボイスチャンネルから退出しました")
         
     except Exception as e:
@@ -291,6 +296,7 @@ async def help_command(interaction: discord.Interaction):
     else:
         help_text += "⚠ 話者一覧を取得できませんでした。VOICEVOX Engineが起動しているか確認してください。"
     
+    metrics.record_command("help")
     # メッセージが長すぎる場合は分割
     if len(help_text) > 2000:
         chunks = []
@@ -321,6 +327,7 @@ async def voice(interaction: discord.Interaction, speaker_id: int):
     
     bot.user_speakers[interaction.user.id] = speaker_id
     bot._save_config()  # 設定を保存
+    metrics.record_command("voice")
     await interaction.response.send_message(f"✓ あなたの読み上げ音声を話者ID {speaker_id} に設定しました", ephemeral=True)
 
 
@@ -345,6 +352,7 @@ async def speakers(interaction: discord.Interaction):
             style_id = style.get("id", 0)
             message += f"• **{speaker_name}** - {style_name} (ID: `{style_id}`)\n"
     
+    metrics.record_command("speakers")
     # メッセージが長すぎる場合は分割
     if len(message) > 2000:
         chunks = [message[i:i+2000] for i in range(0, len(message), 2000)]
@@ -365,6 +373,7 @@ async def speed(interaction: discord.Interaction, speed: float):
     
     bot.user_speeds[interaction.user.id] = speed
     bot._save_config()  # 設定を保存
+    metrics.record_command("speed")
     await interaction.response.send_message(f"✓ あなたの読み上げ速度を {speed} に設定しました", ephemeral=True)
 
 
@@ -489,15 +498,20 @@ async def play_voice_queue(guild: discord.Guild):
             # キューからアイテムを取得
             item = await bot.voice_queues[guild_id].get()
             
-            # 音声データを生成
+            # 音声データを生成（レイテンシを計測）
+            start_time = time.monotonic()
             audio_data = await bot.voicevox.create_audio(
                 text=item["text"],
                 speaker_id=item["speaker_id"],
                 speed=item["speed"]
             )
+            elapsed_ms = (time.monotonic() - start_time) * 1000
             
             if not audio_data:
+                metrics.record_error()
                 continue
+            
+            metrics.record_latency(elapsed_ms)
             
             # 一時ファイルに保存
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
@@ -539,6 +553,7 @@ async def dictionary_add(interaction: discord.Interaction, before: str, after: s
     """辞書登録コマンド: before を after に変換する"""
     bot.dictionary[before] = after
     bot._save_config()
+    metrics.record_command("dictionary_add")
     await interaction.response.send_message(f"✓ 辞書に登録しました: `{before}` → `{after}`", ephemeral=True)
 
 
@@ -549,6 +564,7 @@ async def dictionary_remove(interaction: discord.Interaction, before: str):
     if before in bot.dictionary:
         del bot.dictionary[before]
         bot._save_config()
+        metrics.record_command("dictionary_remove")
         await interaction.response.send_message(f"✓ 辞書から削除しました: `{before}`", ephemeral=True)
     else:
         await interaction.response.send_message(f"⚠ `{before}` は辞書に登録されていません", ephemeral=True)
@@ -559,6 +575,7 @@ async def dictionary_list(interaction: discord.Interaction):
     """辞書一覧表示コマンド（ページネーションUI付き）"""
     entries = list(bot.dictionary.items())
     view = DictionaryListView(entries)
+    metrics.record_command("dictionary_list")
     await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
 
 

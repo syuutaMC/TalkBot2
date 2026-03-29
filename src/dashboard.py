@@ -4,13 +4,19 @@ TalkBot2 ダッシュボード
 Bot の利用状況と VOICEVOX API のレスポンスを確認するための Web サーバー
 ポート: 8080
 """
+import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import aiohttp
 from aiohttp import web
+
+# src パッケージが sys.path に含まれていない場合（スタンドアロン起動時）に追加
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from src import metrics as _metrics  # noqa: E402
 
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", "/app/config/config.json"))
@@ -96,6 +102,12 @@ async def handle_api_voicevox_speakers(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def handle_api_metrics(request: web.Request) -> web.Response:
+    """メトリクス集計データを JSON で返す（グラフ描画用）"""
+    summary = await asyncio.to_thread(_metrics.get_metrics_summary)
+    return web.json_response(summary)
+
+
 # ---------------------------------------------------------------------------
 # アプリケーション構築
 # ---------------------------------------------------------------------------
@@ -107,6 +119,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/status", handle_api_status)
     app.router.add_get("/api/voicevox/status", handle_api_voicevox_status)
     app.router.add_get("/api/voicevox/speakers", handle_api_voicevox_speakers)
+    app.router.add_get("/api/metrics", handle_api_metrics)
     return app
 
 

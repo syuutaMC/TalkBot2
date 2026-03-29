@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TalkBot2 ダッシュボード</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     /* ===== リセット & ベース ===== */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -151,6 +152,31 @@
     }
     .btn-refresh:hover { background: #4f46e5; }
 
+    /* ===== グラフカード ===== */
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+      gap: 1rem;
+    }
+    .chart-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+    }
+    .chart-card .chart-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 0.75rem;
+    }
+    .chart-card .chart-sub {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-top: 0.5rem;
+    }
+    canvas { width: 100% !important; }
+
     /* ===== フッター ===== */
     footer {
       text-align: center;
@@ -199,6 +225,29 @@
     </div>
     <span id="vvVersion" style="color:#94a3b8; font-size:0.85rem;"></span>
     <span class="vv-url" id="vvUrl"></span>
+  </div>
+
+  <!-- ===== メトリクスグラフ ===== -->
+  <div class="section-title">📈 メトリクス（過去 30 日間）</div>
+  <div class="chart-grid">
+
+    <div class="chart-card">
+      <div class="chart-title">⚡ VOICEVOX レイテンシ（日平均 ms）</div>
+      <canvas id="chartLatency" height="200"></canvas>
+      <div class="chart-sub" id="latencyAvg"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">❌ 音声生成エラー数（日別件数）</div>
+      <canvas id="chartErrors" height="200"></canvas>
+      <div class="chart-sub" id="errorsTotal"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">🎮 コマンド利用回数（過去 30 日間）</div>
+      <canvas id="chartCommands" height="200"></canvas>
+    </div>
+
   </div>
 
   <!-- ===== 話者一覧 ===== -->
@@ -273,6 +322,7 @@
     <button class="btn-refresh" onclick="showApiResponse('/api/voicevox/status')">version</button>
     <button class="btn-refresh" onclick="showApiResponse('/api/voicevox/speakers')">speakers</button>
     <button class="btn-refresh" onclick="showApiResponse('/api/status')">bot status</button>
+    <button class="btn-refresh" onclick="showApiResponse('/api/metrics')">metrics</button>
   </div>
   <pre id="apiResponseBox">← 上のボタンを押すと API レスポンスを表示します</pre>
 
@@ -281,6 +331,49 @@
 <footer>TalkBot2 Dashboard — 自動更新: 30 秒ごと</footer>
 
 <script>
+  // ---------- Chart.js グローバル設定 ----------
+  Chart.defaults.color = "#94a3b8";
+  Chart.defaults.borderColor = "#334155";
+
+  const CHART_OPTS_BASE = {
+    responsive: true,
+    animation: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { maxTicksLimit: 8, font: { size: 10 } }, grid: { color: "#1e293b" } },
+      y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: "#334155" } }
+    }
+  };
+
+  // ---------- チャートインスタンス ----------
+  let chartLatency = null;
+  let chartErrors  = null;
+  let chartCommands = null;
+
+  function initCharts() {
+    const latencyCtx  = document.getElementById("chartLatency").getContext("2d");
+    const errorsCtx   = document.getElementById("chartErrors").getContext("2d");
+    const commandsCtx = document.getElementById("chartCommands").getContext("2d");
+
+    chartLatency = new Chart(latencyCtx, {
+      type: "line",
+      data: { labels: [], datasets: [{ data: [], borderColor: "#6366f1", backgroundColor: "rgba(99,102,241,0.1)", fill: true, tension: 0.3, spanGaps: true, pointRadius: 2 }] },
+      options: { ...CHART_OPTS_BASE, scales: { ...CHART_OPTS_BASE.scales, y: { ...CHART_OPTS_BASE.scales.y, title: { display: true, text: "ms", color: "#64748b", font: { size: 10 } } } } }
+    });
+
+    chartErrors = new Chart(errorsCtx, {
+      type: "bar",
+      data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(239,68,68,0.7)", borderColor: "#ef4444", borderWidth: 1 }] },
+      options: { ...CHART_OPTS_BASE, scales: { ...CHART_OPTS_BASE.scales, y: { ...CHART_OPTS_BASE.scales.y, title: { display: true, text: "件数", color: "#64748b", font: { size: 10 } } } } }
+    });
+
+    chartCommands = new Chart(commandsCtx, {
+      type: "bar",
+      data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(34,197,94,0.7)", borderColor: "#22c55e", borderWidth: 1 }] },
+      options: { ...CHART_OPTS_BASE, indexAxis: "y", scales: { x: { ...CHART_OPTS_BASE.scales.x, beginAtZero: true, title: { display: true, text: "回数", color: "#64748b", font: { size: 10 } } }, y: { ticks: { font: { size: 10 } }, grid: { color: "#334155" } } } }
+    });
+  }
+
   // ---------- ヘルパー ----------
   async function fetchJSON(url) {
     const res = await fetch(url);
@@ -289,6 +382,35 @@
 
   function empty(tbody, cols, msg = "データなし") {
     tbody.innerHTML = `<tr class="empty-row"><td colspan="${cols}">${msg}</td></tr>`;
+  }
+
+  // ---------- メトリクスグラフ ----------
+  async function loadMetrics() {
+    try {
+      const d = await fetchJSON("/api/metrics");
+
+      // レイテンシ
+      chartLatency.data.labels   = d.latency.labels;
+      chartLatency.data.datasets[0].data = d.latency.values;
+      chartLatency.update();
+      document.getElementById("latencyAvg").textContent =
+        d.latency.avg_ms != null ? `30 日平均: ${d.latency.avg_ms} ms` : "データなし";
+
+      // エラー
+      chartErrors.data.labels  = d.errors.labels;
+      chartErrors.data.datasets[0].data = d.errors.values;
+      chartErrors.update();
+      document.getElementById("errorsTotal").textContent =
+        `30 日合計: ${d.errors.total} 件`;
+
+      // コマンド
+      chartCommands.data.labels  = d.commands.labels;
+      chartCommands.data.datasets[0].data = d.commands.values;
+      chartCommands.update();
+
+    } catch (e) {
+      console.error("メトリクス取得失敗:", e);
+    }
   }
 
   // ---------- Bot ステータス ----------
@@ -407,7 +529,7 @@
 
   // ---------- 全読み込み ----------
   async function loadAll() {
-    await Promise.all([loadBotStatus(), loadVoicevoxStatus(), loadSpeakers()]);
+    await Promise.all([loadBotStatus(), loadVoicevoxStatus(), loadSpeakers(), loadMetrics()]);
     document.getElementById("lastUpdated").textContent =
       "最終更新: " + new Date().toLocaleTimeString("ja-JP");
   }
@@ -422,6 +544,7 @@
   }
 
   // 初回読み込み + 30 秒ごと自動更新
+  initCharts();
   loadAll();
   setInterval(loadAll, 30000);
 </script>
