@@ -26,14 +26,22 @@ TalkBot2/
 │       └── discord-test/          # Discord Botテスト
 ├── src/                 # ソースコード
 │   ├── __init__.py
-│   ├── bot.py          # メインBot
-│   └── voicevox_client.py  # VOICEVOX連携
+│   ├── bot.py          # メインBot（コマンド・イベント・辞書・音声キュー）
+│   ├── voicevox_client.py  # VOICEVOX連携
+│   ├── metrics.py      # メトリクス管理（レイテンシ・エラー・コマンド使用回数）
+│   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
+│   └── templates/      # ダッシュボードテンプレート
+│       └── index.html
 ├── tests/              # テストコード
 │   ├── __init__.py
 │   ├── test_bot.py
 │   └── test_voicevox_client.py
 ├── docker/             # Docker設定
-├── config/             # 設定ファイル
+│   ├── Dockerfile            # Bot用
+│   ├── Dockerfile.dashboard  # ダッシュボード用
+│   └── docker-compose.yml    # 3サービス構成（voicevox, bot, dashboard）
+├── config/             # 設定ファイル（config.json, metrics.json）
+├── run.py              # 起動スクリプト
 └── requirements.txt    # 依存パッケージ
 ```
 
@@ -91,8 +99,9 @@ TalkBot2/
 2. **Intents**: 必要最小限のIntentsのみ有効化
    ```python
    intents = discord.Intents.default()
-   intents.message_content = True  # 必要な場合のみ
-   intents.voice_states = True
+   intents.message_content = True  # メッセージ読み上げに必要
+   intents.guilds = True           # ギルド情報の取得に必要
+   intents.voice_states = True     # ボイスチャンネル管理に必要
    ```
 
 3. **権限チェック**: コマンド実行前に必要な権限をチェック
@@ -258,6 +267,26 @@ TalkBot2/
 1. **テストの更新**: 既存テストを破壊しない
 2. **後方互換性**: 既存の設定ファイルと互換性を保つ
 3. **パフォーマンス**: 不要な処理を追加しない
+4. **ドキュメント・スキルの同期**: コード変更に応じて関連ドキュメントを更新する
+
+### コード変更時のドキュメント・スキル同期ルール
+
+**コード変更後、以下を必ず確認し、必要に応じて更新してください：**
+
+1. **copilot-instructions.md の更新**:
+   - 新しいファイル/モジュールを追加した場合 → 「プロジェクト構造」セクションに反映
+   - 新しい環境変数を追加した場合 → 「環境変数管理」セクションと `.env.example` に反映
+   - Intentsや依存関係の変更 → 該当セクションのコード例を更新
+   - 更新履歴に変更内容を追記
+
+2. **スキルの追加・更新**:
+   - 新しい技術領域（例: データベース連携、外部API連携）を導入した場合 → 対応するスキルを `.github/skills/` に追加
+   - 既存スキルの前提が変わった場合（例: テストフレームワーク変更） → スキル内容を更新
+   - スキルを追加・削除した場合 → このファイルの「スキルの使用」セクションも更新
+
+3. **更新が不要なケース**:
+   - 既存機能のバグ修正のみの場合
+   - コードフォーマットのみの変更
 
 ### 禁止事項
 
@@ -304,4 +333,6 @@ TalkBot2/
 ---
 
 **更新履歴**:
+- 2026-03-29: プロジェクト構造を実態に合わせて更新（metrics, dashboard, 辞書機能等を反映）
+- 2026-03-29: スキル構造を実態に合わせて修正
 - 2026-03-26: 初版作成
