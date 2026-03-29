@@ -448,6 +448,77 @@ class TestMultiGuildIsolation:
         bot_module.bot.is_playing.pop(guild_id, None)
 
     @pytest.mark.asyncio
+    async def test_play_voice_queue_records_tts_request_on_success(self):
+        """play_voice_queue は音声生成成功時に record_tts_request() を呼ぶこと"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 101010101
+
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        await bot_module.bot.voice_queues[guild_id].put({
+            "text": "テスト",
+            "speaker_id": 1,
+            "speed": 1.0,
+        })
+        bot_module.bot.is_playing[guild_id] = False
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = None  # 接続なし（再生はスキップされる）
+
+        async def fake_create_audio(text, speaker_id, speed):
+            return b"fake_audio_data"
+
+        with patch("src.bot.metrics.record_tts_request") as mock_record_tts, \
+             patch("src.bot.metrics.record_latency"), \
+             patch("src.bot.tempfile.NamedTemporaryFile"), \
+             patch("src.bot.os.unlink"):
+            bot_module.bot.voicevox.create_audio = fake_create_audio
+            await play_voice_queue(mock_guild)
+
+        mock_record_tts.assert_called_once()
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_does_not_record_tts_request_on_failure(self):
+        """play_voice_queue は音声生成失敗（None 返却）時に record_tts_request() を呼ばないこと"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 202020202
+
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        await bot_module.bot.voice_queues[guild_id].put({
+            "text": "テスト",
+            "speaker_id": 1,
+            "speed": 1.0,
+        })
+        bot_module.bot.is_playing[guild_id] = False
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = None
+
+        async def fake_create_audio_fail(text, speaker_id, speed):
+            return None  # 失敗をシミュレート
+
+        with patch("src.bot.metrics.record_tts_request") as mock_record_tts, \
+             patch("src.bot.metrics.record_error"), \
+             patch("src.bot.metrics.record_latency"):
+            bot_module.bot.voicevox.create_audio = fake_create_audio_fail
+            await play_voice_queue(mock_guild)
+
+        mock_record_tts.assert_not_called()
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+
+    @pytest.mark.asyncio
     async def test_play_voice_queue_exits_immediately_when_queue_missing_at_start(self):
         """play_voice_queue 開始時にキューが存在しない場合、即座に終了すること"""
         import src.bot as bot_module

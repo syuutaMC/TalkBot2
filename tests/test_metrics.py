@@ -23,6 +23,7 @@ from src.metrics import (
     record_command,
     record_error,
     record_latency,
+    record_tts_request,
     RETENTION_DAYS,
     JST,
 )
@@ -40,7 +41,7 @@ class TestLoadSaveMetrics:
         missing = tmp_path / "metrics.json"
         with patch("src.metrics.METRICS_PATH", missing):
             data = _load_metrics_sync()
-        assert data == {"latency": [], "errors": [], "commands": {}}
+        assert data == {"latency": [], "errors": [], "tts_requests": [], "commands": {}}
 
     def test_load_returns_file_content(self, tmp_path):
         """ファイルが存在する場合はその内容を返すこと"""
@@ -57,7 +58,7 @@ class TestLoadSaveMetrics:
         f.write_text("not valid json", encoding="utf-8")
         with patch("src.metrics.METRICS_PATH", f):
             data = _load_metrics_sync()
-        assert data == {"latency": [], "errors": [], "commands": {}}
+        assert data == {"latency": [], "errors": [], "tts_requests": [], "commands": {}}
 
     def test_save_creates_file(self, tmp_path):
         """保存するとファイルが作成されること"""
@@ -159,6 +160,23 @@ class TestRecordFunctions:
             # 例外が外に出ないこと
             record_latency(10.0)
 
+    def test_record_tts_request_appends_entry(self, tmp_path):
+        """record_tts_request がエントリを追加すること"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            record_tts_request()
+            record_tts_request()
+            data = _load_metrics_sync()
+        assert len(data["tts_requests"]) == 2
+        assert "ts" in data["tts_requests"][0]
+
+    def test_record_tts_request_does_not_raise_on_io_error(self, tmp_path):
+        """ファイル I/O エラーが発生しても例外を送出しないこと"""
+        f = tmp_path / "sub" / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f), \
+             patch("src.metrics._save_metrics_sync", side_effect=OSError("disk full")):
+            record_tts_request()
+
 
 # ---------------------------------------------------------------------------
 # get_metrics_summary のテスト
@@ -168,12 +186,13 @@ class TestGetMetricsSummary:
     """get_metrics_summary のテスト"""
 
     def test_summary_has_required_keys(self, tmp_path):
-        """返り値に latency / errors / commands キーがあること"""
+        """返り値に latency / errors / tts_requests / commands キーがあること"""
         f = tmp_path / "metrics.json"
         with patch("src.metrics.METRICS_PATH", f):
             summary = get_metrics_summary()
         assert "latency" in summary
         assert "errors" in summary
+        assert "tts_requests" in summary
         assert "commands" in summary
 
     def test_latency_labels_length_equals_30(self, tmp_path):
@@ -196,6 +215,8 @@ class TestGetMetricsSummary:
         with patch("src.metrics.METRICS_PATH", f):
             summary = get_metrics_summary()
         assert summary["latency"]["avg_ms"] is None
+        assert summary["latency"]["min_ms"] is None
+        assert summary["latency"]["max_ms"] is None
 
     def test_avg_ms_calculated_correctly(self, tmp_path):
         """avg_ms がすべてのデータ点の平均であること"""
@@ -207,12 +228,15 @@ class TestGetMetricsSummary:
                 {"ts": now_ts - 3600, "ms": 200.0},
             ],
             "errors": [],
+            "tts_requests": [],
             "commands": {},
         }
         f.write_text(json.dumps(content), encoding="utf-8")
         with patch("src.metrics.METRICS_PATH", f):
             summary = get_metrics_summary()
         assert summary["latency"]["avg_ms"] == 150.0
+        assert summary["latency"]["min_ms"] == 100.0
+        assert summary["latency"]["max_ms"] == 200.0
 
     def test_errors_total_counted_correctly(self, tmp_path):
         """errors.total が正しくカウントされること"""
@@ -235,6 +259,7 @@ class TestGetMetricsSummary:
         content = {
             "latency": [],
             "errors": [],
+            "tts_requests": [],
             "commands": {
                 "join": [{"ts": now_ts}, {"ts": now_ts - 60}],
                 "leave": [{"ts": now_ts}],
@@ -246,6 +271,23 @@ class TestGetMetricsSummary:
         cmd_map = dict(zip(summary["commands"]["labels"], summary["commands"]["values"]))
         assert cmd_map["join"] == 2
         assert cmd_map["leave"] == 1
+
+    def test_tts_requests_total_counted_correctly(self, tmp_path):
+        """tts_requests.total が正しくカウントされること"""
+        f = tmp_path / "metrics.json"
+        now_ts = time.time()
+        content = {
+            "latency": [],
+            "errors": [],
+            "tts_requests": [{"ts": now_ts}, {"ts": now_ts - 60}, {"ts": now_ts - 120}],
+            "commands": {},
+        }
+        f.write_text(json.dumps(content), encoding="utf-8")
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary()
+        assert summary["tts_requests"]["total"] == 3
+        assert len(summary["tts_requests"]["labels"]) == RETENTION_DAYS
+        assert len(summary["tts_requests"]["values"]) == RETENTION_DAYS
 
 
 # ---------------------------------------------------------------------------
