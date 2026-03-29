@@ -581,6 +581,74 @@ class TestGuildTracking:
         assert 111 in bot_module.bot.joined_guilds
 
     @pytest.mark.asyncio
+    async def test_on_guild_remove_clears_guild_configs(self):
+        """on_guild_remove が guild_configs からギルドの設定を削除すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 222
+        bot_module.bot.joined_guilds = {111, guild_id, 333}
+        bot_module.bot.guild_configs = {
+            111: {"read_channel": 1, "dictionary": {}},
+            guild_id: {"read_channel": 2, "dictionary": {"テスト": "test"}},
+            333: {"read_channel": 3, "dictionary": {}},
+        }
+        bot_module.bot.voice_queues = {guild_id: asyncio.Queue()}
+        bot_module.bot.is_playing = {guild_id: False}
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+
+        with patch.object(bot_module.bot, "_save_config"):
+            await bot_module.on_guild_remove(mock_guild)
+
+        assert guild_id not in bot_module.bot.guild_configs
+        assert 111 in bot_module.bot.guild_configs
+        assert 333 in bot_module.bot.guild_configs
+
+    @pytest.mark.asyncio
+    async def test_on_guild_remove_clears_voice_queues_and_is_playing(self):
+        """on_guild_remove が voice_queues と is_playing からギルドのデータを削除すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 444
+        bot_module.bot.joined_guilds = {guild_id}
+        bot_module.bot.guild_configs = {guild_id: {"read_channel": 1, "dictionary": {}}}
+        bot_module.bot.voice_queues = {guild_id: asyncio.Queue(), 555: asyncio.Queue()}
+        bot_module.bot.is_playing = {guild_id: True, 555: False}
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+
+        with patch.object(bot_module.bot, "_save_config"):
+            await bot_module.on_guild_remove(mock_guild)
+
+        assert guild_id not in bot_module.bot.voice_queues
+        assert guild_id not in bot_module.bot.is_playing
+        assert 555 in bot_module.bot.voice_queues
+        assert 555 in bot_module.bot.is_playing
+
+    @pytest.mark.asyncio
+    async def test_on_guild_remove_missing_data_does_not_raise(self):
+        """voice_queues や guild_configs にデータがない場合でも on_guild_remove が例外を発生させないこと"""
+        import src.bot as bot_module
+
+        guild_id = 777
+        bot_module.bot.joined_guilds = {guild_id}
+        bot_module.bot.guild_configs = {}
+        bot_module.bot.voice_queues = {}
+        bot_module.bot.is_playing = {}
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+
+        with patch.object(bot_module.bot, "_save_config"):
+            await bot_module.on_guild_remove(mock_guild)
+
+        assert guild_id not in bot_module.bot.joined_guilds
+
+    @pytest.mark.asyncio
     async def test_on_ready_syncs_joined_guilds_from_actual_guilds(self):
         """on_ready が bot.guilds の内容で joined_guilds を同期して保存すること"""
         from unittest.mock import PropertyMock
