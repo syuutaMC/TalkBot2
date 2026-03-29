@@ -30,7 +30,7 @@ def _load_config_sync() -> dict:
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"user_speakers": {}, "user_speeds": {}, "guild_configs": {}, "dictionary": {}}
+    return {"user_speakers": {}, "user_speeds": {}, "guild_configs": {}, "dictionary": {}, "joined_guilds": []}
 
 
 async def read_config() -> dict:
@@ -41,7 +41,7 @@ async def read_config() -> dict:
         return await asyncio.to_thread(_load_config_sync)
     except Exception as e:
         print(f"設定ファイル読み込みエラー: {e}")
-    return {"user_speakers": {}, "user_speeds": {}, "guild_configs": {}, "dictionary": {}}
+    return {"user_speakers": {}, "user_speeds": {}, "guild_configs": {}, "dictionary": {}, "joined_guilds": []}
 
 
 async def _fetch_voicevox(session: aiohttp.ClientSession, path: str) -> dict[str, Any]:
@@ -77,7 +77,7 @@ async def handle_api_status(request: web.Request) -> web.Response:
     """Bot の設定・利用状況を JSON で返す"""
     config = await read_config()
     data = {
-        "guild_count": len(config.get("guild_configs", {})),
+        "guild_count": len(config.get("joined_guilds", [])),
         "user_count": len(config.get("user_speakers", {})),
         "dictionary_count": len(config.get("dictionary", {})),
         "guild_configs": config.get("guild_configs", {}),
