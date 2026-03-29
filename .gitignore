@@ -34,6 +34,9 @@ audio_cache/
 # Config (uncommit if you want to track config.json)
 # config/config.json
 
+# Runtime metrics data
+config/metrics.json
+
 # IDE
 .vscode/
 .idea/

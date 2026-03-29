@@ -7,15 +7,19 @@ from discord.ext import commands
 import asyncio
 import os
 import json
+import re
 from pathlib import Path
 from dotenv import load_dotenv
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import tempfile
 
+import time
+
 from src.voicevox_client import VoicevoxClient
+from src import metrics
 
 # 環境変数の読み込み
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 # 設定
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -32,6 +36,48 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.voice_states = True
+
+
+class DictionaryListView(discord.ui.View):
+    """辞書一覧のページネーションビュー"""
+
+    PER_PAGE = 20
+
+    def __init__(self, entries: list):
+        super().__init__(timeout=60)
+        self.entries = entries
+        self.page = 0
+        self.total_pages = max(1, (len(entries) + self.PER_PAGE - 1) // self.PER_PAGE)
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_button.disabled = self.page == 0
+        self.next_button.disabled = self.page >= self.total_pages - 1
+
+    def _build_embed(self) -> discord.Embed:
+        start = self.page * self.PER_PAGE
+        end = min(start + self.PER_PAGE, len(self.entries))
+        page_entries = self.entries[start:end]
+
+        embed = discord.Embed(title="📖 読み上げ辞書一覧", color=discord.Color.blue())
+        if page_entries:
+            embed.description = "\n".join(f"`{b}` → `{a}`" for b, a in page_entries)
+        else:
+            embed.description = "辞書が空です"
+        embed.set_footer(text=f"ページ {self.page + 1}/{self.total_pages}（全{len(self.entries)}件）")
+        return embed
+
+    @discord.ui.button(label="◀ 前へ", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    @discord.ui.button(label="次へ ▶", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
 
 
 class VoiceBot(commands.Bot):
@@ -59,17 +105,23 @@ class VoiceBot(commands.Bot):
                     self.user_speakers = {int(k): v for k, v in config.get("user_speakers", {}).items()}
                     self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
-                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件）")
+                    self.dictionary: Dict[str, str] = config.get("dictionary", {})
+                    self.joined_guilds: Set[int] = set(config.get("joined_guilds", []))
+                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {len(self.dictionary)}件）")
             else:
                 self.user_speakers = {}
                 self.user_speeds = {}
                 self.guild_configs = {}
+                self.dictionary: Dict[str, str] = {}
+                self.joined_guilds: Set[int] = set()
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
         except Exception as e:
             print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
             self.user_speakers = {}
             self.user_speeds = {}
             self.guild_configs = {}
+            self.dictionary: Dict[str, str] = {}
+            self.joined_guilds: Set[int] = set()
     
     def _save_config(self):
         """設定ファイルに保存する"""
@@ -78,7 +130,9 @@ class VoiceBot(commands.Bot):
             config = {
                 "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
                 "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
-                "guild_configs": {str(k): v for k, v in self.guild_configs.items()}
+                "guild_configs": {str(k): v for k, v in self.guild_configs.items()},
+                "dictionary": self.dictionary,
+                "joined_guilds": list(self.joined_guilds),
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
@@ -98,7 +152,11 @@ class VoiceBot(commands.Bot):
         # コマンドの同期
         if TEST_GUILD:
             # 特定のギルドにのみコマンドを同期（即座に反映）
+            # まずグローバルコマンドをギルドにコピーしてからグローバルをクリアする
+            # これにより、以前グローバルに同期された古いコマンドが残らないようにする
             self.tree.copy_global_to(guild=TEST_GUILD)
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()
             await self.tree.sync(guild=TEST_GUILD)
             print(f"✓ スラッシュコマンドをギルド {TEST_GUILD.id} に同期しました（即座に反映）")
         else:
@@ -122,6 +180,23 @@ async def on_ready():
     print(f"✓ {bot.user.name} としてログインしました")
     print(f"✓ Bot ID: {bot.user.id}")
     print("=" * 50)
+    # 現在参加しているサーバー一覧で joined_guilds を同期して保存
+    bot.joined_guilds = {g.id for g in bot.guilds}
+    bot._save_config()
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Bot が新しいサーバーに参加したときのイベント"""
+    bot.joined_guilds.add(guild.id)
+    bot._save_config()
+
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    """Bot がサーバーから退出・削除されたときのイベント"""
+    bot.joined_guilds.discard(guild.id)
+    bot._save_config()
 
 
 @bot.tree.command(name="join", description="ボイスチャンネルに参加します")
@@ -141,6 +216,9 @@ async def join(interaction: discord.Interaction):
         await interaction.response.send_message("既にボイスチャンネルに接続しています！", ephemeral=True)
         return
     
+    # 接続に時間がかかる場合でもインタラクションが失効しないよう defer する
+    await interaction.response.defer()
+    
     try:
         # ボイスチャンネルに接続
         await channel.connect()
@@ -152,11 +230,13 @@ async def join(interaction: discord.Interaction):
             }
             bot.voice_queues[guild_id] = asyncio.Queue()
             bot.is_playing[guild_id] = False
+            bot._save_config()
         
-        await interaction.response.send_message(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
+        metrics.record_command("join")
+        await interaction.followup.send(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
         
     except Exception as e:
-        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+        await interaction.followup.send(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="leave", description="ボイスチャンネルから退出します")
@@ -166,6 +246,9 @@ async def leave(interaction: discord.Interaction):
     if not interaction.guild.voice_client:
         await interaction.response.send_message("ボイスチャンネルに接続していません！", ephemeral=True)
         return
+    
+    # 切断に時間がかかる場合でもインタラクションが失効しないよう defer する
+    await interaction.response.defer()
     
     try:
         await interaction.guild.voice_client.disconnect()
@@ -178,11 +261,13 @@ async def leave(interaction: discord.Interaction):
             del bot.voice_queues[guild_id]
         if guild_id in bot.is_playing:
             del bot.is_playing[guild_id]
+        bot._save_config()
         
-        await interaction.response.send_message("✓ ボイスチャンネルから退出しました")
+        metrics.record_command("leave")
+        await interaction.followup.send("✓ ボイスチャンネルから退出しました")
         
     except Exception as e:
-        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+        await interaction.followup.send(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="help", description="使い方と話者一覧を表示します")
@@ -234,6 +319,7 @@ async def help_command(interaction: discord.Interaction):
     else:
         help_text += "⚠ 話者一覧を取得できませんでした。VOICEVOX Engineが起動しているか確認してください。"
     
+    metrics.record_command("help")
     # メッセージが長すぎる場合は分割
     if len(help_text) > 2000:
         chunks = []
@@ -264,6 +350,7 @@ async def voice(interaction: discord.Interaction, speaker_id: int):
     
     bot.user_speakers[interaction.user.id] = speaker_id
     bot._save_config()  # 設定を保存
+    metrics.record_command("voice")
     await interaction.response.send_message(f"✓ あなたの読み上げ音声を話者ID {speaker_id} に設定しました", ephemeral=True)
 
 
@@ -288,6 +375,7 @@ async def speakers(interaction: discord.Interaction):
             style_id = style.get("id", 0)
             message += f"• **{speaker_name}** - {style_name} (ID: `{style_id}`)\n"
     
+    metrics.record_command("speakers")
     # メッセージが長すぎる場合は分割
     if len(message) > 2000:
         chunks = [message[i:i+2000] for i in range(0, len(message), 2000)]
@@ -308,6 +396,7 @@ async def speed(interaction: discord.Interaction, speed: float):
     
     bot.user_speeds[interaction.user.id] = speed
     bot._save_config()  # 設定を保存
+    metrics.record_command("speed")
     await interaction.response.send_message(f"✓ あなたの読み上げ速度を {speed} に設定しました", ephemeral=True)
 
 
@@ -343,6 +432,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 del bot.voice_queues[guild_id]
             if guild_id in bot.is_playing:
                 del bot.is_playing[guild_id]
+            bot._save_config()
 
 
 @bot.event
@@ -379,6 +469,13 @@ async def on_message(message: discord.Message):
     if not text or text.startswith(("http://", "https://")):
         text = "URL省略"
     
+    # 辞書による変換（最長一致・単一パスで多重置換を防ぐ）
+    if bot.dictionary:
+        pattern = "|".join(
+            re.escape(k) for k in sorted(bot.dictionary.keys(), key=len, reverse=True)
+        )
+        text = re.sub(pattern, lambda m: bot.dictionary[m.group(0)], text)
+    
     # 長すぎるメッセージは省略
     if len(text) > 500:
         text = text[:500] + "、以下省略"
@@ -399,7 +496,11 @@ async def on_message(message: discord.Message):
     })
     
     # 再生タスクを開始（まだ開始していない場合）
+    # create_task() はコルーチンをスケジュールするだけで即座には実行しないため、
+    # is_playing を True に設定してから create_task() を呼ぶことで
+    # 同一ギルドに対して複数タスクが起動されるのを防ぐ
     if not bot.is_playing.get(guild_id, False):
+        bot.is_playing[guild_id] = True
         bot.loop.create_task(play_voice_queue(message.guild))
 
 
@@ -410,6 +511,10 @@ async def play_voice_queue(guild: discord.Guild):
     
     try:
         while True:
+            # ギルドが切断済みの場合（/leave や自動退出でキューが削除された）は終了
+            if guild_id not in bot.voice_queues:
+                break
+
             # キューが空なら終了
             if bot.voice_queues[guild_id].empty():
                 break
@@ -417,15 +522,20 @@ async def play_voice_queue(guild: discord.Guild):
             # キューからアイテムを取得
             item = await bot.voice_queues[guild_id].get()
             
-            # 音声データを生成
+            # 音声データを生成（レイテンシを計測）
+            start_time = time.monotonic()
             audio_data = await bot.voicevox.create_audio(
                 text=item["text"],
                 speaker_id=item["speaker_id"],
                 speed=item["speed"]
             )
+            elapsed_ms = (time.monotonic() - start_time) * 1000
             
             if not audio_data:
+                metrics.record_error()
                 continue
+            
+            metrics.record_latency(elapsed_ms)
             
             # 一時ファイルに保存
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
@@ -455,6 +565,45 @@ async def play_voice_queue(guild: discord.Guild):
     
     finally:
         bot.is_playing[guild_id] = False
+
+
+# 辞書コマンドグループ
+dictionary_group = app_commands.Group(name="dictionary", description="読み上げ辞書の管理")
+
+
+@dictionary_group.command(name="add", description="読み上げ辞書に登録します")
+@app_commands.describe(before="変換前のテキスト", after="変換後のテキスト")
+async def dictionary_add(interaction: discord.Interaction, before: str, after: str):
+    """辞書登録コマンド: before を after に変換する"""
+    bot.dictionary[before] = after
+    bot._save_config()
+    metrics.record_command("dictionary_add")
+    await interaction.response.send_message(f"✓ 辞書に登録しました: `{before}` → `{after}`", ephemeral=True)
+
+
+@dictionary_group.command(name="remove", description="読み上げ辞書から削除します")
+@app_commands.describe(before="削除する変換前テキスト")
+async def dictionary_remove(interaction: discord.Interaction, before: str):
+    """辞書削除コマンド: before の読み方でヒットする場合は削除する"""
+    if before in bot.dictionary:
+        del bot.dictionary[before]
+        bot._save_config()
+        metrics.record_command("dictionary_remove")
+        await interaction.response.send_message(f"✓ 辞書から削除しました: `{before}`", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"⚠ `{before}` は辞書に登録されていません", ephemeral=True)
+
+
+@dictionary_group.command(name="list", description="辞書の一覧を表示します（20件ずつ）")
+async def dictionary_list(interaction: discord.Interaction):
+    """辞書一覧表示コマンド（ページネーションUI付き）"""
+    entries = list(bot.dictionary.items())
+    view = DictionaryListView(entries)
+    metrics.record_command("dictionary_list")
+    await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
+
+
+bot.tree.add_command(dictionary_group)
 
 
 def main():

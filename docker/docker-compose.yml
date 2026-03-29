@@ -33,13 +33,30 @@ services:
     depends_on:
       - voicevox
     environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
       - VOICEVOX_URL=http://voicevox:50021
-      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
       - TZ=Asia/Tokyo
     env_file:
       - ../.env
     restart: unless-stopped
     volumes:
       # 設定ファイルの永続化
-      - ../config/config.json:/app/config.json
+      - ../config:/app/config
+
+  # 監視ダッシュボード (http://localhost:8080)
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: talkbot2_dashboard
+    depends_on:
+      - voicevox
+    ports:
+      - "50022:8080"
+    environment:
+      - VOICEVOX_URL=http://voicevox:50021
+      - DASHBOARD_PORT=8080
+      - TZ=Asia/Tokyo
+    restart: unless-stopped
+    volumes:
+      # Bot の設定ファイルを読み取り専用で共有
+      - ../config:/app/config:ro

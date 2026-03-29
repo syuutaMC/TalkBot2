@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # アプリケーションファイルのコピー
 COPY src/ ./src/
 COPY run.py ./
-COPY config/config.json ./config.json
+COPY config/ ./config/
 
 # 環境変数の設定
 ENV PYTHONUNBUFFERED=1
