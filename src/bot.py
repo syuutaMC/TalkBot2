@@ -10,7 +10,7 @@ import json
 import re
 from pathlib import Path
 from dotenv import load_dotenv
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import tempfile
 
 import time
@@ -106,12 +106,14 @@ class VoiceBot(commands.Bot):
                     self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
                     self.dictionary: Dict[str, str] = config.get("dictionary", {})
+                    self.joined_guilds: Set[int] = set(config.get("joined_guilds", []))
                     print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {len(self.dictionary)}件）")
             else:
                 self.user_speakers = {}
                 self.user_speeds = {}
                 self.guild_configs = {}
                 self.dictionary: Dict[str, str] = {}
+                self.joined_guilds: Set[int] = set()
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
         except Exception as e:
             print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
@@ -119,6 +121,7 @@ class VoiceBot(commands.Bot):
             self.user_speeds = {}
             self.guild_configs = {}
             self.dictionary: Dict[str, str] = {}
+            self.joined_guilds: Set[int] = set()
     
     def _save_config(self):
         """設定ファイルに保存する"""
@@ -128,7 +131,8 @@ class VoiceBot(commands.Bot):
                 "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
                 "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
                 "guild_configs": {str(k): v for k, v in self.guild_configs.items()},
-                "dictionary": self.dictionary
+                "dictionary": self.dictionary,
+                "joined_guilds": list(self.joined_guilds),
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
@@ -176,6 +180,23 @@ async def on_ready():
     print(f"✓ {bot.user.name} としてログインしました")
     print(f"✓ Bot ID: {bot.user.id}")
     print("=" * 50)
+    # 現在参加しているサーバー一覧で joined_guilds を同期して保存
+    bot.joined_guilds = {g.id for g in bot.guilds}
+    bot._save_config()
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Bot が新しいサーバーに参加したときのイベント"""
+    bot.joined_guilds.add(guild.id)
+    bot._save_config()
+
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    """Bot がサーバーから退出・削除されたときのイベント"""
+    bot.joined_guilds.discard(guild.id)
+    bot._save_config()
 
 
 @bot.tree.command(name="join", description="ボイスチャンネルに参加します")

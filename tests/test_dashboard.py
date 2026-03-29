@@ -46,6 +46,7 @@ class TestReadConfig:
             "user_speeds": {},
             "guild_configs": {},
             "dictionary": {},
+            "joined_guilds": [],
         }
 
     @pytest.mark.asyncio
@@ -171,6 +172,7 @@ class TestHandleApiStatus:
             "user_speeds": {"1": 1.2},
             "guild_configs": {"100": {"read_channel": 200}},
             "dictionary": {"a": "b"},
+            "joined_guilds": [100, 200, 300],
         }
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(config_data), encoding="utf-8")
@@ -181,9 +183,30 @@ class TestHandleApiStatus:
             assert resp.status == 200
             data = await resp.json()
 
-        assert data["guild_count"] == 1
+        assert data["guild_count"] == 3
         assert data["user_count"] == 2
         assert data["dictionary_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_api_status_guild_count_uses_joined_guilds_not_guild_configs(self, aiohttp_client, app, tmp_path):
+        """guild_count は guild_configs ではなく joined_guilds を使うこと"""
+        config_data = {
+            "user_speakers": {},
+            "user_speeds": {},
+            "guild_configs": {"100": {"read_channel": 200}},
+            "dictionary": {},
+            "joined_guilds": [100, 200, 300, 400, 500],
+        }
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps(config_data), encoding="utf-8")
+
+        with patch("src.dashboard.CONFIG_PATH", config_file):
+            client: TestClient = await aiohttp_client(app)
+            resp = await client.get("/api/status")
+            data = await resp.json()
+
+        # guild_configs には 1 件しかないが、joined_guilds は 5 件
+        assert data["guild_count"] == 5
 
     @pytest.mark.asyncio
     async def test_api_status_returns_zeros_when_config_empty(self, aiohttp_client, app, tmp_path):
