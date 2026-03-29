@@ -192,7 +192,11 @@ async def on_guild_join(guild: discord.Guild):
 @bot.event
 async def on_guild_remove(guild: discord.Guild):
     """Bot がサーバーから退出・削除されたときのイベント"""
-    bot.joined_guilds.discard(guild.id)
+    guild_id = guild.id
+    bot.joined_guilds.discard(guild_id)
+    bot.guild_configs.pop(guild_id, None)
+    bot.voice_queues.pop(guild_id, None)
+    bot.is_playing.pop(guild_id, None)
     bot._save_config()
 
 
