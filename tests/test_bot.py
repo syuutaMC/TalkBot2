@@ -328,7 +328,6 @@ class TestMultiGuildIsolation:
         bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
         bot_module.bot.user_speakers = {}
         bot_module.bot.user_speeds = {}
-        bot_module.bot.dictionary = {}
 
         mock_guild = MagicMock()
         mock_guild.id = guild_id
@@ -382,7 +381,6 @@ class TestMultiGuildIsolation:
         bot_module.bot.guild_configs[guild_id] = {"read_channel": 888}
         bot_module.bot.user_speakers = {}
         bot_module.bot.user_speeds = {}
-        bot_module.bot.dictionary = {}
 
         mock_guild = MagicMock()
         mock_guild.id = guild_id
@@ -616,7 +614,6 @@ class TestGuildTracking:
             "user_speakers": {},
             "user_speeds": {},
             "guild_configs": {},
-            "dictionary": {},
             "joined_guilds": [100, 200, 300],
         }
         config_file = tmp_path / "config.json"
@@ -802,3 +799,181 @@ class TestGuildConfigPersistence:
 
         # クリーンアップ
         self._cleanup(guild_id)
+
+
+class TestPerGuildDictionary:
+    """辞書がサーバーごとに分離されることのテスト"""
+
+    def _make_interaction(self, guild_id: int):
+        """テスト用の Interaction モックを生成するヘルパー"""
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = guild_id
+        return interaction
+
+    def _cleanup(self, *guild_ids):
+        """指定したギルドIDのbot状態をクリーンアップするヘルパー"""
+        import src.bot as bot_module
+        for gid in guild_ids:
+            bot_module.bot.guild_configs.pop(gid, None)
+
+    @pytest.mark.asyncio
+    async def test_dictionary_add_stores_entry_in_guild_config(self):
+        """dictionary add はギルド設定内の辞書にエントリを追加すること"""
+        import src.bot as bot_module
+
+        guild_id = 10001
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+        interaction = self._make_interaction(guild_id)
+
+        with patch.object(bot_module.bot, "_save_config"):
+            await bot_module.dictionary_add.callback(interaction, "テスト", "テスト読み")
+
+        assert guild_id in bot_module.bot.guild_configs
+        assert bot_module.bot.guild_configs[guild_id]["dictionary"]["テスト"] == "テスト読み"
+
+        self._cleanup(guild_id)
+
+    @pytest.mark.asyncio
+    async def test_dictionary_add_is_isolated_per_guild(self):
+        """dictionary add は別のギルドの辞書に影響を与えないこと"""
+        import src.bot as bot_module
+
+        guild_a = 20001
+        guild_b = 20002
+        bot_module.bot.guild_configs.pop(guild_a, None)
+        bot_module.bot.guild_configs.pop(guild_b, None)
+
+        interaction_a = self._make_interaction(guild_a)
+        interaction_b = self._make_interaction(guild_b)
+
+        with patch.object(bot_module.bot, "_save_config"):
+            await bot_module.dictionary_add.callback(interaction_a, "AI", "エーアイ")
+            await bot_module.dictionary_add.callback(interaction_b, "AI", "藍")
+
+        assert bot_module.bot.guild_configs[guild_a]["dictionary"]["AI"] == "エーアイ"
+        assert bot_module.bot.guild_configs[guild_b]["dictionary"]["AI"] == "藍"
+
+        self._cleanup(guild_a, guild_b)
+
+    @pytest.mark.asyncio
+    async def test_dictionary_remove_only_affects_own_guild(self):
+        """dictionary remove は自ギルドの辞書のみ削除すること"""
+        import src.bot as bot_module
+
+        guild_a = 30001
+        guild_b = 30002
+        bot_module.bot.guild_configs[guild_a] = {"dictionary": {"word": "読みA"}}
+        bot_module.bot.guild_configs[guild_b] = {"dictionary": {"word": "読みB"}}
+
+        interaction_a = self._make_interaction(guild_a)
+
+        with patch.object(bot_module.bot, "_save_config"):
+            await bot_module.dictionary_remove.callback(interaction_a, "word")
+
+        assert "word" not in bot_module.bot.guild_configs[guild_a].get("dictionary", {})
+        assert bot_module.bot.guild_configs[guild_b]["dictionary"]["word"] == "読みB"
+
+        self._cleanup(guild_a, guild_b)
+
+    @pytest.mark.asyncio
+    async def test_dictionary_list_shows_only_own_guild_entries(self):
+        """dictionary list は自ギルドの辞書のみ表示すること"""
+        import src.bot as bot_module
+
+        guild_a = 40001
+        guild_b = 40002
+        bot_module.bot.guild_configs[guild_a] = {"dictionary": {"サーバーA専用": "A"}}
+        bot_module.bot.guild_configs[guild_b] = {"dictionary": {"サーバーB専用": "B"}}
+
+        interaction_a = self._make_interaction(guild_a)
+        interaction_a.response.send_message = AsyncMock()
+
+        await bot_module.dictionary_list.callback(interaction_a)
+
+        interaction_a.response.send_message.assert_called_once()
+        _, kwargs = interaction_a.response.send_message.call_args
+        embed = kwargs.get("embed")
+        assert embed is not None
+        assert "サーバーA専用" in embed.description
+        assert "サーバーB専用" not in embed.description
+
+        self._cleanup(guild_a, guild_b)
+
+    @pytest.mark.asyncio
+    async def test_dictionary_add_no_guild_returns_error(self):
+        """辞書コマンドはDMなどギルド外では使用できないこと"""
+        import src.bot as bot_module
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.guild = None
+
+        await bot_module.dictionary_add.callback(interaction, "test", "テスト")
+
+        interaction.response.send_message.assert_called_once()
+        _, kwargs = interaction.response.send_message.call_args
+        assert kwargs.get("ephemeral") is True
+
+    @pytest.mark.asyncio
+    async def test_on_message_uses_per_guild_dictionary(self):
+        """on_message はサーバー固有の辞書を使って変換すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 50001
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {
+            "read_channel": 777,
+            "dictionary": {"テスト": "てすと"},
+        }
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "テスト"
+        mock_message.author.id = 42
+
+        with patch.object(bot_module.bot, "process_commands", new_callable=AsyncMock), \
+             patch.object(bot_module.bot, "loop") as mock_loop:
+            def cancel_coro(coro):
+                coro.close()
+                return MagicMock()
+            mock_loop.create_task.side_effect = cancel_coro
+            await bot_module.on_message(mock_message)
+
+        queued = await bot_module.bot.voice_queues[guild_id].get()
+        assert queued["text"] == "てすと"
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+    def test_save_and_load_config_persists_per_guild_dictionary(self, tmp_path):
+        """_save_config と _load_config で辞書がギルドごとに保存・復元されること"""
+        config_file = tmp_path / "config.json"
+
+        with patch("src.bot.CONFIG_FILE", config_file):
+            bot = VoiceBot()
+            bot.guild_configs = {
+                111: {"read_channel": 1, "dictionary": {"hello": "こんにちは"}},
+                222: {"read_channel": 2, "dictionary": {"bye": "さようなら"}},
+            }
+            bot._save_config()
+
+        with patch("src.bot.CONFIG_FILE", config_file):
+            bot2 = VoiceBot()
+
+        assert bot2.guild_configs[111]["dictionary"] == {"hello": "こんにちは"}
+        assert bot2.guild_configs[222]["dictionary"] == {"bye": "さようなら"}
