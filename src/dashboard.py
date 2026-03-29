@@ -103,8 +103,16 @@ async def handle_api_voicevox_speakers(request: web.Request) -> web.Response:
 
 
 async def handle_api_metrics(request: web.Request) -> web.Response:
-    """メトリクス集計データを JSON で返す（グラフ描画用）"""
-    summary = await asyncio.to_thread(_metrics.get_metrics_summary)
+    """メトリクス集計データを JSON で返す（グラフ描画用）
+
+    Query Parameters:
+        granularity: 集計単位。"minute"（過去60分）, "hour"（過去24時間）,
+                     "day"（過去30日）。デフォルトは "day"。
+    """
+    granularity = request.rel_url.query.get("granularity", "day")
+    if granularity not in ("minute", "hour", "day"):
+        granularity = "day"
+    summary = await asyncio.to_thread(_metrics.get_metrics_summary, granularity)
     return web.json_response(summary)
 
 

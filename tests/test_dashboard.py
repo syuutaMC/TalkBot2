@@ -288,8 +288,63 @@ class TestHandleApiMetrics:
             "latency": {"labels": [], "values": [], "avg_ms": None},
             "errors":  {"labels": [], "values": [], "total": 0},
             "commands": {"labels": [], "values": []},
+            "granularity": "day",
         }
         request = MagicMock()
         with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)):
             response = await handle_api_metrics(request)
         assert response.status == 200
+
+    @pytest.mark.asyncio
+    async def test_metrics_passes_granularity_minute(self, tmp_path):
+        """granularity=minute パラメータが get_metrics_summary に渡されること"""
+        mock_summary = {
+            "latency": {"labels": [], "values": [], "avg_ms": None},
+            "errors":  {"labels": [], "values": [], "total": 0},
+            "commands": {"labels": [], "values": []},
+            "granularity": "minute",
+        }
+        request = MagicMock()
+        request.rel_url.query.get = MagicMock(return_value="minute")
+        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)) as mock_thread:
+            response = await handle_api_metrics(request)
+        assert response.status == 200
+        mock_thread.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_metrics_passes_granularity_hour(self, tmp_path):
+        """granularity=hour パラメータが get_metrics_summary に渡されること"""
+        mock_summary = {
+            "latency": {"labels": [], "values": [], "avg_ms": None},
+            "errors":  {"labels": [], "values": [], "total": 0},
+            "commands": {"labels": [], "values": []},
+            "granularity": "hour",
+        }
+        request = MagicMock()
+        request.rel_url.query.get = MagicMock(return_value="hour")
+        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)) as mock_thread:
+            response = await handle_api_metrics(request)
+        assert response.status == 200
+        mock_thread.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_metrics_invalid_granularity_falls_back_to_day(self):
+        """不正な granularity の場合は day にフォールバックすること"""
+        mock_summary = {
+            "latency": {"labels": [], "values": [], "avg_ms": None},
+            "errors":  {"labels": [], "values": [], "total": 0},
+            "commands": {"labels": [], "values": []},
+            "granularity": "day",
+        }
+        request = MagicMock()
+        request.rel_url.query.get = MagicMock(return_value="invalid")
+        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)) as mock_thread:
+            response = await handle_api_metrics(request)
+        assert response.status == 200
+        # フォールバック後は "day" で呼ばれること
+        args = mock_thread.call_args[0]
+        assert args[1] == "day"
+        # レスポンス JSON に granularity: "day" が含まれること
+        import json as _json
+        body = _json.loads(response.body)
+        assert body["granularity"] == "day"

@@ -86,50 +86,77 @@ def record_command(command_name: str) -> None:
         print(f"メトリクス記録エラー (command): {e}")
 
 
-def get_metrics_summary() -> dict:
+def get_metrics_summary(granularity: str = "day") -> dict:
     """ダッシュボード用にメトリクスを集計して返す
+
+    Args:
+        granularity (str): 集計単位。"minute"（過去60分）, "hour"（過去24時間）,
+                           "day"（過去30日）のいずれか。デフォルトは "day"。
 
     Returns:
         dict: 以下のキーを持つ辞書
-            latency  : labels (日付リスト), values (日平均 ms), avg_ms (全期間平均)
-            errors   : labels (日付リスト), values (日別件数),  total (合計件数)
-            commands : labels (コマンド名リスト), values (使用回数リスト)
+            latency     : labels (時刻ラベルリスト), values (各バケット平均 ms), avg_ms (期間平均)
+            errors      : labels (時刻ラベルリスト), values (各バケット件数),  total (期間合計件数)
+            commands    : labels (コマンド名リスト), values (使用回数リスト)
+            granularity : 集計単位
     """
+    if granularity not in ("minute", "hour", "day"):
+        granularity = "day"
+
     data = _load_metrics_sync()
     data = _cleanup_old_data(data)
 
     now_utc = datetime.datetime.now(datetime.timezone.utc)
-    labels = [
-        (now_utc - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
-        for i in range(RETENTION_DAYS - 1, -1, -1)
-    ]
-    label_set = set(labels)
 
-    # ----- レイテンシ（日ごとの平均） -----
-    latency_by_day: dict[str, list[float]] = {label: [] for label in labels}
+    if granularity == "minute":
+        num_buckets = 60
+        delta = datetime.timedelta(minutes=1)
+        label_fmt = "%H:%M"
+        key_fmt = "%Y-%m-%dT%H:%M"
+    elif granularity == "hour":
+        num_buckets = 24
+        delta = datetime.timedelta(hours=1)
+        label_fmt = "%m-%d %H:00"
+        key_fmt = "%Y-%m-%dT%H"
+    else:  # "day"
+        num_buckets = RETENTION_DAYS
+        delta = datetime.timedelta(days=1)
+        label_fmt = "%Y-%m-%d"
+        key_fmt = "%Y-%m-%d"
+
+    buckets = [now_utc - delta * i for i in range(num_buckets - 1, -1, -1)]
+    labels = [b.strftime(label_fmt) for b in buckets]
+    keys = [b.strftime(key_fmt) for b in buckets]
+    key_set = set(keys)
+
+    def _ts_to_key(ts: float) -> str:
+        return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime(key_fmt)
+
+    # ----- レイテンシ（各バケットの平均） -----
+    latency_by_bucket: dict[str, list[float]] = {k: [] for k in keys}
     for point in data.get("latency", []):
-        day = datetime.datetime.fromtimestamp(point["ts"], datetime.timezone.utc).strftime("%Y-%m-%d")
-        if day in label_set:
-            latency_by_day[day].append(point["ms"])
+        k = _ts_to_key(point["ts"])
+        if k in key_set:
+            latency_by_bucket[k].append(point["ms"])
 
     latency_values: list[Optional[float]] = []
-    for label in labels:
-        vals = latency_by_day[label]
+    for k in keys:
+        vals = latency_by_bucket[k]
         latency_values.append(round(sum(vals) / len(vals), 1) if vals else None)
 
-    all_latencies = [p["ms"] for p in data.get("latency", [])]
+    all_latencies = [p["ms"] for p in data.get("latency", []) if _ts_to_key(p["ts"]) in key_set]
     avg_ms: Optional[float] = (
         round(sum(all_latencies) / len(all_latencies), 1) if all_latencies else None
     )
 
-    # ----- エラー（日ごとの件数） -----
-    errors_by_day: dict[str, int] = {label: 0 for label in labels}
+    # ----- エラー（各バケットの件数） -----
+    errors_by_bucket: dict[str, int] = {k: 0 for k in keys}
     for point in data.get("errors", []):
-        day = datetime.datetime.fromtimestamp(point["ts"], datetime.timezone.utc).strftime("%Y-%m-%d")
-        if day in label_set:
-            errors_by_day[day] += 1
+        k = _ts_to_key(point["ts"])
+        if k in key_set:
+            errors_by_bucket[k] += 1
 
-    error_values = [errors_by_day[label] for label in labels]
+    error_values = [errors_by_bucket[k] for k in keys]
 
     # ----- コマンド使用回数 -----
     commands = data.get("commands", {})
@@ -151,4 +178,5 @@ def get_metrics_summary() -> dict:
             "labels": command_labels,
             "values": command_values,
         },
+        "granularity": granularity,
     }
