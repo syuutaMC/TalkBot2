@@ -45,7 +45,6 @@ class TestReadConfig:
             "user_speakers": {},
             "user_speeds": {},
             "guild_configs": {},
-            "dictionary": {},
             "joined_guilds": [],
         }
 
@@ -170,8 +169,7 @@ class TestHandleApiStatus:
         config_data = {
             "user_speakers": {"1": 2, "3": 4},
             "user_speeds": {"1": 1.2},
-            "guild_configs": {"100": {"read_channel": 200}},
-            "dictionary": {"a": "b"},
+            "guild_configs": {"100": {"read_channel": 200, "dictionary": {"a": "b"}}},
             "joined_guilds": [100, 200, 300],
         }
         config_file = tmp_path / "config.json"
@@ -194,7 +192,6 @@ class TestHandleApiStatus:
             "user_speakers": {},
             "user_speeds": {},
             "guild_configs": {"100": {"read_channel": 200}},
-            "dictionary": {},
             "joined_guilds": [100, 200, 300, 400, 500],
         }
         config_file = tmp_path / "config.json"
@@ -371,3 +368,26 @@ class TestHandleApiMetrics:
         import json as _json
         body = _json.loads(response.body)
         assert body["granularity"] == "day"
+
+    @pytest.mark.asyncio
+    async def test_api_status_dictionary_count_aggregates_per_guild(self, aiohttp_client, app, tmp_path):
+        """dictionary_count は全ギルドの辞書エントリ数の合計であること"""
+        config_data = {
+            "user_speakers": {},
+            "user_speeds": {},
+            "guild_configs": {
+                "100": {"read_channel": 1, "dictionary": {"a": "A", "b": "B"}},
+                "200": {"read_channel": 2, "dictionary": {"c": "C"}},
+                "300": {"read_channel": 3},
+            },
+            "joined_guilds": [100, 200, 300],
+        }
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps(config_data), encoding="utf-8")
+
+        with patch("src.dashboard.CONFIG_PATH", config_file):
+            client: TestClient = await aiohttp_client(app)
+            resp = await client.get("/api/status")
+            data = await resp.json()
+
+        assert data["dictionary_count"] == 3

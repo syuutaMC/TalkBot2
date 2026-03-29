@@ -105,14 +105,13 @@ class VoiceBot(commands.Bot):
                     self.user_speakers = {int(k): v for k, v in config.get("user_speakers", {}).items()}
                     self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
-                    self.dictionary: Dict[str, str] = config.get("dictionary", {})
                     self.joined_guilds: Set[int] = set(config.get("joined_guilds", []))
-                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {len(self.dictionary)}件）")
+                    total_dict = sum(len(gc.get("dictionary", {})) for gc in self.guild_configs.values())
+                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {total_dict}件）")
             else:
                 self.user_speakers = {}
                 self.user_speeds = {}
                 self.guild_configs = {}
-                self.dictionary: Dict[str, str] = {}
                 self.joined_guilds: Set[int] = set()
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
         except Exception as e:
@@ -120,7 +119,6 @@ class VoiceBot(commands.Bot):
             self.user_speakers = {}
             self.user_speeds = {}
             self.guild_configs = {}
-            self.dictionary: Dict[str, str] = {}
             self.joined_guilds: Set[int] = set()
     
     def _save_config(self):
@@ -131,7 +129,6 @@ class VoiceBot(commands.Bot):
                 "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
                 "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
                 "guild_configs": {str(k): v for k, v in self.guild_configs.items()},
-                "dictionary": self.dictionary,
                 "joined_guilds": list(self.joined_guilds),
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -470,11 +467,12 @@ async def on_message(message: discord.Message):
         text = "URL省略"
     
     # 辞書による変換（最長一致・単一パスで多重置換を防ぐ）
-    if bot.dictionary:
+    guild_dict = bot.guild_configs.get(guild_id, {}).get("dictionary", {})
+    if guild_dict:
         pattern = "|".join(
-            re.escape(k) for k in sorted(bot.dictionary.keys(), key=len, reverse=True)
+            re.escape(k) for k in sorted(guild_dict.keys(), key=len, reverse=True)
         )
-        text = re.sub(pattern, lambda m: bot.dictionary[m.group(0)], text)
+        text = re.sub(pattern, lambda m: guild_dict[m.group(0)], text)
     
     # 長すぎるメッセージは省略
     if len(text) > 500:
@@ -571,11 +569,24 @@ async def play_voice_queue(guild: discord.Guild):
 dictionary_group = app_commands.Group(name="dictionary", description="読み上げ辞書の管理")
 
 
+def _ensure_guild_dictionary(guild_id: int) -> Dict[str, str]:
+    """ギルド固有の辞書を返す（存在しない場合は初期化して返す）"""
+    if guild_id not in bot.guild_configs:
+        bot.guild_configs[guild_id] = {}
+    if "dictionary" not in bot.guild_configs[guild_id]:
+        bot.guild_configs[guild_id]["dictionary"] = {}
+    return bot.guild_configs[guild_id]["dictionary"]
+
+
 @dictionary_group.command(name="add", description="読み上げ辞書に登録します")
 @app_commands.describe(before="変換前のテキスト", after="変換後のテキスト")
 async def dictionary_add(interaction: discord.Interaction, before: str, after: str):
     """辞書登録コマンド: before を after に変換する"""
-    bot.dictionary[before] = after
+    if not interaction.guild:
+        await interaction.response.send_message("⚠ このコマンドはサーバー内でのみ使用できます", ephemeral=True)
+        return
+    guild_id = interaction.guild.id
+    _ensure_guild_dictionary(guild_id)[before] = after
     bot._save_config()
     metrics.record_command("dictionary_add")
     await interaction.response.send_message(f"✓ 辞書に登録しました: `{before}` → `{after}`", ephemeral=True)
@@ -585,8 +596,13 @@ async def dictionary_add(interaction: discord.Interaction, before: str, after: s
 @app_commands.describe(before="削除する変換前テキスト")
 async def dictionary_remove(interaction: discord.Interaction, before: str):
     """辞書削除コマンド: before の読み方でヒットする場合は削除する"""
-    if before in bot.dictionary:
-        del bot.dictionary[before]
+    if not interaction.guild:
+        await interaction.response.send_message("⚠ このコマンドはサーバー内でのみ使用できます", ephemeral=True)
+        return
+    guild_id = interaction.guild.id
+    guild_dict = _ensure_guild_dictionary(guild_id)
+    if before in guild_dict:
+        del guild_dict[before]
         bot._save_config()
         metrics.record_command("dictionary_remove")
         await interaction.response.send_message(f"✓ 辞書から削除しました: `{before}`", ephemeral=True)
@@ -597,7 +613,12 @@ async def dictionary_remove(interaction: discord.Interaction, before: str):
 @dictionary_group.command(name="list", description="辞書の一覧を表示します（20件ずつ）")
 async def dictionary_list(interaction: discord.Interaction):
     """辞書一覧表示コマンド（ページネーションUI付き）"""
-    entries = list(bot.dictionary.items())
+    if not interaction.guild:
+        await interaction.response.send_message("⚠ このコマンドはサーバー内でのみ使用できます", ephemeral=True)
+        return
+    guild_id = interaction.guild.id
+    guild_dict = _ensure_guild_dictionary(guild_id)
+    entries = list(guild_dict.items())
     view = DictionaryListView(entries)
     metrics.record_command("dictionary_list")
     await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
