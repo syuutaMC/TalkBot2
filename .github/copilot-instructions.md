@@ -20,7 +20,10 @@ TalkBot2/
 ├── .github/              # Copilot設定・スキル定義
 │   ├── copilot-instructions.md  # このファイル
 │   └── skills/          # カスタムスキル
-│       └── discord-bot-test.md
+│       ├── async-error-handling/  # 非同期エラーハンドリング
+│       ├── commit/                # コミットガイドライン
+│       ├── discord-bot-dev/       # Discord Bot開発
+│       └── discord-test/          # Discord Botテスト
 ├── src/                 # ソースコード
 │   ├── __init__.py
 │   ├── bot.py          # メインBot
@@ -270,16 +273,23 @@ TalkBot2/
 
 ### `.github/skills/`に定義されたスキル
 
-- **discord-bot-test.md**: Discord Botのテスト作成ガイドライン
+- **discord-test**: Discord Botのテスト作成ガイドライン
   - テスト作成時は必ずこのスキルを参照
   - モックの使用方法やベストプラクティスが含まれる
+- **discord-bot-dev**: Discord Bot開発のベストプラクティス
+  - スラッシュコマンド、音声処理、イベントハンドリングの実装ガイド
+- **async-error-handling**: 非同期エラーハンドリングのベストプラクティス
+  - Discord Bot、VOICEVOX連携などの非同期処理に適用
+- **commit**: コミットメッセージのガイドライン
+  - 明確で原子的なコミットメッセージの作成
 
 ### スキルの呼び出し方
 
 コード生成時、Copilotは自動的にこれらのスキルを参照しますが、明示的に参照したい場合は：
 
 ```
-@discord-bot-test スラッシュコマンドのテストを生成してください
+@discord-test スラッシュコマンドのテストを生成してください
+@discord-bot-dev 音声処理の実装を手伝ってください
 ```
 
 ---
