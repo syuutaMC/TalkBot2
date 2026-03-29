@@ -31,8 +31,8 @@ wheels/
 *.wav
 audio_cache/
 
-# Config (uncommit if you want to track config.json)
-# config/config.json
+# Config
+config/config.json
 
 # Runtime metrics data
 config/metrics.json
