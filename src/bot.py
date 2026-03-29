@@ -230,6 +230,7 @@ async def join(interaction: discord.Interaction):
             }
             bot.voice_queues[guild_id] = asyncio.Queue()
             bot.is_playing[guild_id] = False
+            bot._save_config()
         
         metrics.record_command("join")
         await interaction.followup.send(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
@@ -260,6 +261,7 @@ async def leave(interaction: discord.Interaction):
             del bot.voice_queues[guild_id]
         if guild_id in bot.is_playing:
             del bot.is_playing[guild_id]
+        bot._save_config()
         
         metrics.record_command("leave")
         await interaction.followup.send("✓ ボイスチャンネルから退出しました")
@@ -430,6 +432,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 del bot.voice_queues[guild_id]
             if guild_id in bot.is_playing:
                 del bot.is_playing[guild_id]
+            bot._save_config()
 
 
 @bot.event
