@@ -6,6 +6,7 @@ src/metrics.py のユニットテスト
 import json
 import sys
 import time
+import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,6 +24,7 @@ from src.metrics import (
     record_error,
     record_latency,
     RETENTION_DAYS,
+    JST,
 )
 
 
@@ -367,3 +369,36 @@ class TestGetMetricsSummaryGranularity:
             summary = get_metrics_summary(granularity="hour")
         assert summary["latency"]["avg_ms"] == 100.0
         assert summary["errors"]["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# JST タイムゾーンのテスト
+# ---------------------------------------------------------------------------
+
+class TestJstTimezone:
+    """時刻ラベルが JST (UTC+9) で生成されることのテスト"""
+
+    def test_jst_offset_is_plus_9(self):
+        """JST は UTC+9 であること"""
+        assert JST.utcoffset(None) == datetime.timedelta(hours=9)
+
+    def test_labels_use_jst_not_utc(self, tmp_path):
+        """ラベルが UTC ではなく JST の時刻で生成されること"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="day")
+
+        now_jst = datetime.datetime.now(JST)
+        today_jst = now_jst.strftime("%Y-%m-%d")
+        # 最後のラベル（最新のバケット）が JST の今日であること
+        assert summary["latency"]["labels"][-1] == today_jst
+
+    def test_minute_labels_use_jst_current_time(self, tmp_path):
+        """granularity='minute' のラベルが JST の現在時刻を含むこと"""
+        f = tmp_path / "metrics.json"
+        with patch("src.metrics.METRICS_PATH", f):
+            summary = get_metrics_summary(granularity="minute")
+
+        now_jst = datetime.datetime.now(JST)
+        current_minute_jst = now_jst.strftime("%H:%M")
+        assert summary["latency"]["labels"][-1] == current_minute_jst

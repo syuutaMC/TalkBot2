@@ -15,6 +15,8 @@ from typing import Optional
 METRICS_PATH = Path(os.getenv("METRICS_PATH", "config/metrics.json"))
 RETENTION_DAYS = 30
 
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
 
 def _load_metrics_sync() -> dict:
     """メトリクスファイルを同期的に読み込む"""
@@ -106,7 +108,7 @@ def get_metrics_summary(granularity: str = "day") -> dict:
     data = _load_metrics_sync()
     data = _cleanup_old_data(data)
 
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    now_jst = datetime.datetime.now(JST)
 
     if granularity == "minute":
         num_buckets = 60
@@ -124,13 +126,13 @@ def get_metrics_summary(granularity: str = "day") -> dict:
         label_fmt = "%Y-%m-%d"
         key_fmt = "%Y-%m-%d"
 
-    buckets = [now_utc - delta * i for i in range(num_buckets - 1, -1, -1)]
+    buckets = [now_jst - delta * i for i in range(num_buckets - 1, -1, -1)]
     labels = [b.strftime(label_fmt) for b in buckets]
     keys = [b.strftime(key_fmt) for b in buckets]
     key_set = set(keys)
 
     def _ts_to_key(ts: float) -> str:
-        return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime(key_fmt)
+        return datetime.datetime.fromtimestamp(ts, JST).strftime(key_fmt)
 
     # ----- レイテンシ（各バケットの平均） -----
     latency_by_bucket: dict[str, list[float]] = {k: [] for k in keys}
