@@ -1,51 +1,97 @@
-# Discord 読み上げBot with VOICEVOX
+# TalkBot2
 
 VOICEVOX Engineを使用してDiscordのテキストチャンネルのメッセージを読み上げるBotです。
+
+## 概要
+
+TalkBot2は、DiscordサーバーでVOICEVOX Engineを使用した高品質な音声合成でテキストメッセージを読み上げるBotです。
+ユーザーごとに異なる話者（キャラクター）を設定でき、読み上げ速度の調整や単語の読み方をカスタマイズできる辞書機能を備えています。
+
+### 主な機能
+
+- ✅ スラッシュコマンド対応
+- ✅ VOICEVOXによる高品質な音声合成
+- ✅ ユーザーごとに異なる音声キャラクター設定
+- ✅ 読み上げ速度の調整
+- ✅ 複数の話者（キャラクター）から選択可能
+- ✅ **辞書機能** - 特定の単語の読み方をカスタマイズ
+- ✅ **メトリクス・ダッシュボード** - パフォーマンスとエラーの可視化
+
+## スラッシュコマンド一覧
+
+| コマンド | 説明 | 引数 | 例 |
+|---------|------|------|-----|
+| `/join` | ボイスチャンネルに参加し、読み上げを開始 | - | `/join` |
+| `/leave` | ボイスチャンネルから退出 | - | `/leave` |
+| `/help` | 使い方とコマンド一覧を表示 | - | `/help` |
+| `/voice <speaker_id>` | 自分の読み上げ音声を変更 | speaker_id: 話者ID（数値） | `/voice 3` |
+| `/speakers` | 利用可能な話者（キャラクター）一覧を表示 | - | `/speakers` |
+| `/speed <value>` | 読み上げ速度を設定 | value: 速度（0.5〜2.0） | `/speed 1.5` |
+| `/dict add <word> <reading>` | 辞書に単語と読み方を追加 | word: 単語, reading: 読み方 | `/dict add Discord でぃすこーど` |
+| `/dict remove <word>` | 辞書から単語を削除 | word: 単語 | `/dict remove Discord` |
+| `/dict list` | 辞書に登録されている単語一覧を表示 | - | `/dict list` |
 
 ## プロジェクト構造
 
 ```
-erii_TalkBot/
-├── src/                    # ソースコード
-│   ├── __init__.py        # パッケージ初期化
-│   ├── bot.py             # メインのBotファイル
-│   └── voicevox_client.py # VOICEVOX Engine連携モジュール
-├── docker/                 # Docker関連ファイル
-│   ├── Dockerfile         # Botのコンテナ定義
-│   ├── docker-compose.yml # サービス構成
-│   └── .dockerignore      # Docker除外設定
-├── config/                 # 設定ファイル
-│   └── config.json        # Bot設定
-├── .env.example           # 環境変数サンプル
-├── .gitignore             # Git除外設定
-├── requirements.txt       # Python依存パッケージ
-└── README.md              # このファイル
+TalkBot2/
+├── .github/              # Copilot設定・スキル定義
+│   ├── copilot-instructions.md
+│   └── skills/          # カスタムスキル
+├── src/                 # ソースコード
+│   ├── bot.py          # メインBot（コマンド・イベント・辞書・音声キュー）
+│   ├── voicevox_client.py  # VOICEVOX連携
+│   ├── metrics.py      # メトリクス管理
+│   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
+│   └── templates/      # ダッシュボードテンプレート
+│       └── index.html
+├── tests/              # テストコード
+├── docker/             # Docker設定
+│   ├── Dockerfile            # Bot用
+│   ├── Dockerfile.dashboard  # ダッシュボード用
+│   └── docker-compose.yml    # 3サービス構成（voicevox, bot, dashboard）
+├── config/             # 設定ファイル（config.json, metrics.json）
+├── run.py              # 起動スクリプト
+├── requirements.txt    # Python依存パッケージ
+└── README.md           # このファイル
 ```
 
-## 機能
+## アーキテクチャ
 
-- ✅ スラッシュコマンド対応
-- ✅ VOICEVOXによる高品質な音声合成
-- ✅ ユーザーごとに異なる音声キャラクター設定可能
-- ✅ 読み上げ速度の調整
-- ✅ 複数の話者（キャラクター）から選択可能
+```mermaid
+graph TB
+    Discord[Discord Server]
+    Bot[TalkBot2 Bot]
+    VOICEVOX[VOICEVOX Engine]
+    Config[config.json]
+    Metrics[metrics.json]
+    Dashboard[Dashboard Web UI :8080]
+    
+    Discord -->|メッセージ| Bot
+    Bot -->|音声合成リクエスト| VOICEVOX
+    VOICEVOX -->|音声データ| Bot
+    Bot -->|音声再生| Discord
+    Bot -->|設定保存| Config
+    Bot -->|メトリクス記録| Metrics
+    Dashboard -->|読み込み| Metrics
+```
 
-## 必要な環境
+## セットアップ
 
-### Dockerを使う場合（推奨）
+### 前提条件
+
+#### Dockerを使う場合（推奨）
 - Docker
 - Docker Compose
 - **NVIDIA GPU（推奨）** - GPU版VOICEVOX Engineを使用
 - NVIDIA Container Toolkit（GPU使用時）
 - Discord Bot Token
 
-### 直接起動する場合
+#### 直接起動する場合
 - Python 3.9以上
 - Discord Bot Token
 - VOICEVOX Engine（ローカルで起動）
 - FFmpeg（音声再生に必要）
-
-## セットアップ
 
 ### 1. VOICEVOX Engineのインストール
 
@@ -96,8 +142,8 @@ sudo apt install ffmpeg
 
 ```bash
 # リポジトリのクローン
-git clone <repository_url>
-cd erii_TalkBot
+git clone https://github.com/syuutaMC/TalkBot2.git
+cd TalkBot2
 
 # 仮想環境の作成（推奨）
 python -m venv venv
@@ -125,12 +171,14 @@ cp .env.example .env
 ```
 
 `.env`ファイルを編集：
-```env
-DISCORD_TOKEN=あなたのDiscord Bot Token
-VOICEVOX_URL=http://127.0.0.1:50021
-```
 
-## 使い方
+| 変数名 | 説明 | 必須 | デフォルト値 | 例 |
+|--------|------|------|-------------|-----|
+| `DISCORD_TOKEN` | Discord BotのトークンをDiscord Developer Portalから取得 | ✅ | - | `MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.GhIjKl...` |
+| `VOICEVOX_URL` | VOICEVOX EngineのエンドポイントURL | ❌ | `http://127.0.0.1:50021` | `http://localhost:50021` |
+| `DISCORD_GUILD_ID` | テスト用のギルドID（設定するとそのギルドにのみコマンドを即座に同期） | ❌ | - | `123456789012345678` |
+
+## 起動方法
 
 ### Dockerを使う場合（推奨）
 
@@ -150,6 +198,9 @@ docker-compose up -d
 
 # ログの確認
 docker-compose logs -f discord-bot
+
+# ダッシュボードにアクセス
+# ブラウザで http://localhost:8080 を開く
 
 # 停止
 docker-compose down
@@ -176,25 +227,84 @@ python src/bot.py
 python -m src.bot
 ```
 
-### 2. コマンド一覧
+起動後、ダッシュボードは `http://localhost:8080` で閲覧できます。
 
-| コマンド | 説明 |
-|---------|------|
-| `/join` | Botがボイスチャンネルに参加し、読み上げを開始 |
-| `/leave` | Botがボイスチャンネルから退出 |
-| `/voice <speaker_id>` | 自分の読み上げ音声を変更（話者IDを指定） |
-| `/speakers` | 利用可能な話者（キャラクター）一覧を表示 |
-| `/speed <速度>` | 読み上げ速度を設定（0.5〜2.0） |
+## 使い方
 
-### 3. 使用例
+### Botをサーバーに招待
 
-1. ボイスチャンネルに接続
-2. テキストチャンネルで `/join` を実行
-3. Botが同じボイスチャンネルに参加
-4. そのテキストチャンネルに書き込まれたメッセージが自動で読み上げられます
-5. `/speakers` で好きなキャラクターを探す
-6. `/voice 3` のように話者IDを指定して自分の声を変更
-7. `/speed 1.2` で少し速く読み上げるように設定可能
+1. [Discord Developer Portal](https://discord.com/developers/applications)で作成したアプリケーションを選択
+2. 「OAuth2」→「URL Generator」で以下を選択：
+   - **SCOPES**: `bot`, `applications.commands`
+   - **BOT PERMISSIONS**: 
+     - Send Messages
+     - Connect
+     - Speak
+     - Use Voice Activity
+3. 生成されたURLでBotをサーバーに招待
+
+### 基本的な読み上げ
+
+1. Botをボイスチャンネルに招待:
+   ```
+   /join
+   ```
+
+2. テキストチャンネルにメッセージを送信すると自動的に読み上げられます:
+   ```
+   こんにちは！これはテストです。
+   ```
+
+3. 話者を変更:
+   ```
+   /speakers
+   ```
+   利用可能な話者一覧を確認し、好きな話者のIDを指定:
+   ```
+   /voice 3
+   ```
+
+4. 読み上げ速度を変更:
+   ```
+   /speed 1.5
+   ```
+
+5. 退出:
+   ```
+   /leave
+   ```
+
+### 辞書機能の使い方
+
+特定の単語の読み方を登録できます:
+
+```
+/dict add Discord でぃすこーど
+/dict add Python ぱいそん
+/dict add GitHub ぎっとはぶ
+```
+
+登録した単語を含むメッセージは、指定した読み方で読み上げられます。
+
+辞書の一覧を確認:
+```
+/dict list
+```
+
+単語を削除:
+```
+/dict remove Discord
+```
+
+### メトリクス・ダッシュボード
+
+Bot起動時に、パフォーマンスとエラーを可視化するダッシュボードが `http://localhost:8080` で起動します（Docker使用時はdashboardコンテナから提供）。
+
+ダッシュボードで確認できる情報:
+- 音声合成のレイテンシ（応答時間）
+- エラー発生回数
+- コマンド使用回数
+- 過去30日間の統計データ
 
 ## Docker関連のコマンド
 
@@ -232,9 +342,36 @@ cd ..
 
 ## トラブルシューティング
 
-### Docker使用時
+### Botが起動しない
 
-#### コンテナが起動しない
+**症状**: `discord.errors.LoginFailure: Improper token has been passed.`
+
+**原因**: Discord Botトークンが無効または設定されていない。
+
+**解決方法**:
+1. `.env`ファイルに`DISCORD_TOKEN`が正しく設定されているか確認
+2. Discord Developer Portalで新しいトークンを再生成
+3. トークンの前後に余分なスペースや引用符がないか確認
+
+### 音声が再生されない
+
+**症状**: Botはボイスチャンネルに参加するが音声が聞こえない。
+
+**原因**: VOICEVOX Engineが起動していない、または接続できない。
+
+**解決方法**:
+1. VOICEVOX Engineが起動しているか確認: `http://127.0.0.1:50021/docs` にアクセス
+2. Docker Composeを使用している場合、`docker-compose ps`で全サービスが起動しているか確認
+3. ファイアウォールでポート50021がブロックされていないか確認
+4. `.env`ファイルの`VOICEVOX_URL`が正しいか確認
+
+### Docker使用時にコンテナが起動しない
+
+**症状**: `docker-compose up -d`実行後もコンテナが起動しない。
+
+**原因**: メモリ不足、ポート競合、Dockerデーモン未起動など。
+
+**解決方法**:
 ```bash
 # ログを確認
 docker-compose logs
@@ -245,32 +382,91 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
-#### VOICEVOX Engineが起動しない
-- メモリが不足していないか確認（最低4GB推奨）
-- Docker Desktopのリソース設定を確認
-- GPU版を使用する場合：
-  - NVIDIA Container Toolkitがインストールされているか確認
-  - `nvidia-smi` コマンドでGPUが認識されているか確認
-  - GPUが使用できない場合は、docker-compose.ymlのイメージを `voicevox/voicevox_engine:cpu-ubuntu20.04-latest` に変更してCPU版を使用
+### VOICEVOX Engine（Docker）が起動しない
 
-### 直接起動時
+**原因と解決方法**:
+- **メモリ不足**: 最低4GB推奨。Docker Desktopのリソース設定を確認
+- **GPU版が起動しない**: 
+  - NVIDIA Container Toolkitがインストールされているか確認: `nvidia-smi`
+  - GPUが使用できない場合は、CPU版に切り替え:
+    ```yaml
+    # docker-compose.ymlのvoicevoxイメージを変更
+    image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+    ```
 
-#### VOICEVOX Engineに接続できない
+### FFmpegがインストールされていない
 
-- VOICEVOX Engineが起動しているか確認
-- `.env`ファイルの`VOICEVOX_URL`が正しいか確認
-- ファイアウォールで50021ポートがブロックされていないか確認
+**症状**: 音声再生時にエラーが発生する。
 
-### 音声が再生されない
+**解決方法**:
 
-- FFmpegがインストールされているか確認
-- FFmpegのパスが環境変数に追加されているか確認
-- コマンドプロンプト/ターミナルで `ffmpeg -version` を実行して確認
+#### Windows
+1. [FFmpeg公式サイト](https://ffmpeg.org/download.html)からダウンロード
+2. zipを解凍し、`bin`フォルダのパスを環境変数に追加
+3. コマンドプロンプトで `ffmpeg -version` を実行して確認
+
+#### Mac
+```bash
+brew install ffmpeg
+```
+
+#### Linux
+```bash
+sudo apt install ffmpeg
+```
 
 ### Botがボイスチャンネルに参加できない
 
-- Bot招待時に「Connect」と「Speak」権限を付与したか確認
-- サーバーの権限設定を確認
+**症状**: `/join`コマンドを実行してもBotが参加しない。
+
+**原因**: Bot招待時に必要な権限が付与されていない。
+
+**解決方法**:
+1. Bot招待時に以下の権限を付与したか確認：
+   - Connect（接続）
+   - Speak（発言）
+   - Use Voice Activity（音声検出を使用）
+2. サーバーの該当チャンネルの権限設定でBotがブロックされていないか確認
+
+### ダッシュボードにアクセスできない
+
+**症状**: `http://localhost:8080`にアクセスできない。
+
+**解決方法**:
+1. Bot起動ログでダッシュボードが起動しているか確認
+2. ポート8080が他のアプリケーションで使用されていないか確認:
+   ```bash
+   # Windows
+   netstat -ano | findstr :8080
+   
+   # Mac/Linux
+   lsof -i :8080
+   ```
+3. 環境変数`DASHBOARD_PORT`でポート番号を変更可能
+
+## 開発者向け情報
+
+### テストの実行
+
+```bash
+# 全テストを実行
+pytest
+
+# 特定のファイルをテスト
+pytest tests/test_bot.py
+
+# カバレッジを確認
+pytest --cov=src tests/
+```
+
+### プロジェクト構成の詳細
+
+- `src/bot.py`: メインBot（コマンド、イベントハンドラ、辞書機能、音声キュー管理）
+- `src/voicevox_client.py`: VOICEVOX Engine連携クライアント
+- `src/metrics.py`: メトリクス収集・管理（レイテンシ、エラー、コマンド使用回数）
+- `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード）
+- `config/config.json`: Bot設定（話者設定、辞書データ）
+- `config/metrics.json`: メトリクスデータ（過去30日分）
 
 ## ライセンス
 
