@@ -803,13 +803,13 @@ class TestGuildConfigPersistence:
         self._cleanup(guild_a, guild_b)
 
     @pytest.mark.asyncio
-    async def test_leave_saves_config_after_removing_guild(self):
-        """/leave はギルド設定を削除して設定を保存すること"""
+    async def test_leave_saves_config_and_preserves_guild_config(self):
+        """/leave は音声状態をクリアしつつギルド設定（辞書など）を保持して保存すること"""
         import asyncio
         import src.bot as bot_module
 
         guild_id = 300400500
-        bot_module.bot.guild_configs[guild_id] = {"read_channel": 999}
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 999, "dictionary": {"hello": "こんにちは"}}
         bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
         bot_module.bot.is_playing[guild_id] = False
 
@@ -818,21 +818,26 @@ class TestGuildConfigPersistence:
         with patch.object(bot_module.bot, "_save_config") as mock_save:
             await leave.callback(interaction)
 
-        assert guild_id not in bot_module.bot.guild_configs
+        # guild_configs は保持されること（辞書を保存するため）
+        assert guild_id in bot_module.bot.guild_configs
+        assert bot_module.bot.guild_configs[guild_id]["dictionary"] == {"hello": "こんにちは"}
+        # 音声状態はクリアされること
+        assert guild_id not in bot_module.bot.voice_queues
+        assert guild_id not in bot_module.bot.is_playing
         mock_save.assert_called_once()
 
         # クリーンアップ
         self._cleanup(guild_id)
 
     @pytest.mark.asyncio
-    async def test_auto_leave_saves_config(self):
-        """全員退出による自動退出時にも guild_configs が削除されて保存されること"""
+    async def test_auto_leave_saves_config_and_preserves_guild_config(self):
+        """全員退出による自動退出時も guild_configs（辞書など）を保持して保存されること"""
         import asyncio
         import src.bot as bot_module
 
         guild_id = 500600700
 
-        bot_module.bot.guild_configs[guild_id] = {"read_channel": 888}
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 888, "dictionary": {"bye": "さようなら"}}
         bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
         bot_module.bot.is_playing[guild_id] = False
 
@@ -862,8 +867,39 @@ class TestGuildConfigPersistence:
         with patch.object(bot_module.bot, "_save_config") as mock_save:
             await on_voice_state_update(member, before, after)
 
-        assert guild_id not in bot_module.bot.guild_configs
+        # guild_configs は保持されること（辞書を保存するため）
+        assert guild_id in bot_module.bot.guild_configs
+        assert bot_module.bot.guild_configs[guild_id]["dictionary"] == {"bye": "さようなら"}
+        # 音声状態はクリアされること
+        assert guild_id not in bot_module.bot.voice_queues
+        assert guild_id not in bot_module.bot.is_playing
         mock_save.assert_called_once()
+
+        # クリーンアップ
+        self._cleanup(guild_id)
+
+    @pytest.mark.asyncio
+    async def test_join_updates_read_channel_when_guild_config_exists(self):
+        """/join は既存のギルド設定があっても read_channel を更新すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 700800900
+        # 既存の設定（辞書あり）
+        bot_module.bot.guild_configs[guild_id] = {
+            "read_channel": 111,
+            "dictionary": {"hello": "こんにちは"},
+        }
+
+        interaction = self._make_join_interaction(guild_id, 999)
+
+        with patch.object(bot_module.bot, "_save_config"):
+            await join.callback(interaction)
+
+        # read_channel が新しいチャンネルに更新されること
+        assert bot_module.bot.guild_configs[guild_id]["read_channel"] == 999
+        # 辞書は保持されること
+        assert bot_module.bot.guild_configs[guild_id]["dictionary"] == {"hello": "こんにちは"}
 
         # クリーンアップ
         self._cleanup(guild_id)

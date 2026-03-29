@@ -224,14 +224,14 @@ async def join(interaction: discord.Interaction):
         # ボイスチャンネルに接続
         await channel.connect()
         
-        # ギルドの設定を初期化
+        # ギルドの設定を更新（既存の辞書などは保持しつつ、読み上げチャンネルを更新）
         if guild_id not in bot.guild_configs:
-            bot.guild_configs[guild_id] = {
-                "read_channel": interaction.channel.id  # 現在のチャンネルを読み上げ対象に
-            }
-            bot.voice_queues[guild_id] = asyncio.Queue()
-            bot.is_playing[guild_id] = False
-            bot._save_config()
+            bot.guild_configs[guild_id] = {}
+        bot.guild_configs[guild_id]["read_channel"] = interaction.channel.id
+        # 参加のたびにキューと再生状態をリセットして新鮮な状態で開始する
+        bot.voice_queues[guild_id] = asyncio.Queue()
+        bot.is_playing[guild_id] = False
+        bot._save_config()
         
         metrics.record_command("join")
         await interaction.followup.send(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
@@ -254,10 +254,8 @@ async def leave(interaction: discord.Interaction):
     try:
         await interaction.guild.voice_client.disconnect()
         
-        # ギルドの設定をクリーン
+        # ギルドの音声状態のみクリーンアップ（辞書などのギルド設定は保持する）
         guild_id = interaction.guild.id
-        if guild_id in bot.guild_configs:
-            del bot.guild_configs[guild_id]
         if guild_id in bot.voice_queues:
             del bot.voice_queues[guild_id]
         if guild_id in bot.is_playing:
@@ -425,10 +423,8 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             print(f"✓ {member.guild.name} のボイスチャンネルにメンバーがいなくなったため、自動退出します")
             await voice_client.disconnect()
             
-            # ギルドの設定をクリーンアップ
+            # ギルドの音声状態のみクリーンアップ（辞書などのギルド設定は保持する）
             guild_id = member.guild.id
-            if guild_id in bot.guild_configs:
-                del bot.guild_configs[guild_id]
             if guild_id in bot.voice_queues:
                 del bot.voice_queues[guild_id]
             if guild_id in bot.is_playing:
