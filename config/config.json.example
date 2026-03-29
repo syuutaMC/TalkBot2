@@ -1,7 +1,11 @@
 {
     "user_speakers": {},
     "user_speeds": {},
-    "guild_configs": {},
-    "dictionary": {},
+    "guild_configs": {
+        "123456789012345678": {
+            "read_channel": 0,
+            "dictionary": {}
+        }
+    },
     "joined_guilds": []
 }
