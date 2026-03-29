@@ -14,7 +14,7 @@ import pytest
 os.environ.setdefault("DISCORD_TOKEN", "dummy_token_for_testing")
 os.environ.setdefault("VOICEVOX_URL", "http://127.0.0.1:50021")
 
-from src.bot import VoiceBot, join, leave, play_voice_queue, on_guild_join, on_guild_remove, on_ready
+from src.bot import VoiceBot, join, leave, play_voice_queue, on_guild_join, on_guild_remove, on_ready, on_voice_state_update
 
 
 class TestSetupHookCommandSync:
@@ -639,3 +639,166 @@ class TestGuildTracking:
         saved = json.loads(config_file.read_text(encoding="utf-8"))
         assert set(saved["joined_guilds"]) == {111, 222, 333}
 
+
+class TestGuildConfigPersistence:
+    """guild_configs が /join・/leave・自動退出で正しく保存されることのテスト"""
+
+    def _make_join_interaction(self, guild_id: int, read_channel_id: int):
+        """テスト用の /join インタラクションモックを生成するヘルパー"""
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        mock_channel = MagicMock()
+        mock_channel.name = "テストチャンネル"
+        mock_channel.connect = AsyncMock()
+        interaction.user.voice = MagicMock()
+        interaction.user.voice.channel = mock_channel
+
+        interaction.guild = MagicMock()
+        interaction.guild.id = guild_id
+        interaction.guild.voice_client = None
+        interaction.channel = MagicMock()
+        interaction.channel.id = read_channel_id
+
+        return interaction
+
+    def _cleanup(self, *guild_ids):
+        """指定したギルドIDのbot状態をクリーンアップするヘルパー"""
+        import src.bot as bot_module
+        for gid in guild_ids:
+            bot_module.bot.guild_configs.pop(gid, None)
+            bot_module.bot.voice_queues.pop(gid, None)
+            bot_module.bot.is_playing.pop(gid, None)
+
+    def _make_leave_interaction(self, guild_id: int):
+        """テスト用の /leave インタラクションモックを生成するヘルパー"""
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        interaction.guild = MagicMock()
+        interaction.guild.id = guild_id
+
+        mock_vc = AsyncMock()
+        mock_vc.disconnect = AsyncMock()
+        interaction.guild.voice_client = mock_vc
+
+        return interaction
+
+    @pytest.mark.asyncio
+    async def test_join_saves_guild_config(self):
+        """/join はギルド設定を guild_configs に追加して設定を保存すること"""
+        import src.bot as bot_module
+
+        guild_id = 100200300
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+        interaction = self._make_join_interaction(guild_id, 2)
+
+        with patch.object(bot_module.bot, "_save_config") as mock_save:
+            await join.callback(interaction)
+
+        assert guild_id in bot_module.bot.guild_configs
+        mock_save.assert_called_once()
+
+        # クリーンアップ
+        self._cleanup(guild_id)
+
+    @pytest.mark.asyncio
+    async def test_join_multiple_guilds_saves_all_configs(self):
+        """複数のギルドで /join したとき、それぞれ guild_configs が保存されること"""
+        import src.bot as bot_module
+
+        guild_a = 111000111
+        guild_b = 222000222
+        bot_module.bot.guild_configs.pop(guild_a, None)
+        bot_module.bot.guild_configs.pop(guild_b, None)
+
+        interaction_a = self._make_join_interaction(guild_a, 10)
+        interaction_b = self._make_join_interaction(guild_b, 20)
+
+        save_calls = []
+
+        def record_save():
+            # 保存時点の guild_configs のキーを記録
+            save_calls.append(set(bot_module.bot.guild_configs.keys()))
+
+        with patch.object(bot_module.bot, "_save_config", side_effect=record_save):
+            await join.callback(interaction_a)
+            await join.callback(interaction_b)
+
+        # それぞれの /join で _save_config が呼ばれること
+        assert len(save_calls) == 2
+        # 2 回目の保存時点では両ギルドが guild_configs にいること
+        assert guild_a in save_calls[1]
+        assert guild_b in save_calls[1]
+
+        # クリーンアップ
+        self._cleanup(guild_a, guild_b)
+
+    @pytest.mark.asyncio
+    async def test_leave_saves_config_after_removing_guild(self):
+        """/leave はギルド設定を削除して設定を保存すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 300400500
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 999}
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+
+        interaction = self._make_leave_interaction(guild_id)
+
+        with patch.object(bot_module.bot, "_save_config") as mock_save:
+            await leave.callback(interaction)
+
+        assert guild_id not in bot_module.bot.guild_configs
+        mock_save.assert_called_once()
+
+        # クリーンアップ
+        self._cleanup(guild_id)
+
+    @pytest.mark.asyncio
+    async def test_auto_leave_saves_config(self):
+        """全員退出による自動退出時にも guild_configs が削除されて保存されること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 500600700
+
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 888}
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+
+        mock_bot_member = MagicMock(spec=discord.Member)
+        mock_bot_member.bot = True
+
+        mock_channel = MagicMock()
+        mock_channel.members = [mock_bot_member]  # ボットのみ残っている
+
+        mock_vc = AsyncMock()
+        mock_vc.channel = mock_channel
+        mock_vc.disconnect = AsyncMock()
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = mock_vc
+
+        member = MagicMock(spec=discord.Member)
+        member.guild = mock_guild
+        member.bot = False
+
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = mock_channel
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = None
+
+        with patch.object(bot_module.bot, "_save_config") as mock_save:
+            await on_voice_state_update(member, before, after)
+
+        assert guild_id not in bot_module.bot.guild_configs
+        mock_save.assert_called_once()
+
+        # クリーンアップ
+        self._cleanup(guild_id)

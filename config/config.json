@@ -1,4 +1,7 @@
 {
     "user_speakers": {},
-    "guild_configs": {}
+    "user_speeds": {},
+    "guild_configs": {},
+    "dictionary": {},
+    "joined_guilds": []
 }
