@@ -449,7 +449,7 @@ class TestMultiGuildIsolation:
 
     @pytest.mark.asyncio
     async def test_play_voice_queue_records_tts_request_on_success(self):
-        """play_voice_queue は音声生成成功時に record_tts_request() を呼ぶこと"""
+        """play_voice_queue は音声生成成功時に voice_play_total をインクリメントすること"""
         import asyncio
         import src.bot as bot_module
 
@@ -470,14 +470,13 @@ class TestMultiGuildIsolation:
         async def fake_create_audio(text, speaker_id, speed):
             return b"fake_audio_data"
 
-        with patch("src.bot.metrics.record_tts_request") as mock_record_tts, \
-             patch("src.bot.metrics.record_latency"), \
+        with patch("src.bot.prom.voice_play_total") as mock_voice_play, \
              patch("src.bot.tempfile.NamedTemporaryFile"), \
              patch("src.bot.os.unlink"):
             bot_module.bot.voicevox.create_audio = fake_create_audio
             await play_voice_queue(mock_guild)
 
-        mock_record_tts.assert_called_once()
+        mock_voice_play.inc.assert_called_once()
 
         # クリーンアップ
         bot_module.bot.voice_queues.pop(guild_id, None)
@@ -485,7 +484,7 @@ class TestMultiGuildIsolation:
 
     @pytest.mark.asyncio
     async def test_play_voice_queue_does_not_record_tts_request_on_failure(self):
-        """play_voice_queue は音声生成失敗（None 返却）時に record_tts_request() を呼ばないこと"""
+        """play_voice_queue は音声生成失敗（None 返却）時に voice_play_total をインクリメントしないこと"""
         import asyncio
         import src.bot as bot_module
 
@@ -506,13 +505,11 @@ class TestMultiGuildIsolation:
         async def fake_create_audio_fail(text, speaker_id, speed):
             return None  # 失敗をシミュレート
 
-        with patch("src.bot.metrics.record_tts_request") as mock_record_tts, \
-             patch("src.bot.metrics.record_error"), \
-             patch("src.bot.metrics.record_latency"):
+        with patch("src.bot.prom.voice_play_total") as mock_voice_play:
             bot_module.bot.voicevox.create_audio = fake_create_audio_fail
             await play_voice_queue(mock_guild)
 
-        mock_record_tts.assert_not_called()
+        mock_voice_play.inc.assert_not_called()
 
         # クリーンアップ
         bot_module.bot.voice_queues.pop(guild_id, None)
