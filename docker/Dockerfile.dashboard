@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 依存パッケージのインストール（aiohttp のみ必要）
+# 依存パッケージのインストール
 COPY requirements.txt .
-RUN pip install --no-cache-dir aiohttp
+RUN pip install --no-cache-dir aiohttp prometheus_client psutil
 
 # アプリケーションファイルのコピー
 COPY src/ ./src/
