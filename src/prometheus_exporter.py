@@ -107,7 +107,7 @@ def update_dynamic_metrics() -> None:
 # aiohttp ハンドラー
 # ---------------------------------------------------------------------------
 
-def _collect_all() -> list:
+def _collect_all() -> list[Any]:
     """現在のモードに応じてすべてのメトリクスを収集して返す。
 
     PROMETHEUS_MULTIPROC_DIR が設定されている場合はマルチプロセスモード
