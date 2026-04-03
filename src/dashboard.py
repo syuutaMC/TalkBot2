@@ -16,7 +16,6 @@ from aiohttp import web
 
 # src パッケージが sys.path に含まれていない場合（スタンドアロン起動時）に追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src import metrics as _metrics  # noqa: E402
 from src import prometheus_exporter as _prom  # noqa: E402
 
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
@@ -105,17 +104,9 @@ async def handle_api_voicevox_speakers(request: web.Request) -> web.Response:
 
 
 async def handle_api_metrics(request: web.Request) -> web.Response:
-    """メトリクス集計データを JSON で返す（グラフ描画用）
-
-    Query Parameters:
-        granularity: 集計単位。"minute"（過去60分）, "hour"（過去24時間）,
-                     "day"（過去30日）。デフォルトは "day"。
-    """
-    granularity = request.rel_url.query.get("granularity", "day")
-    if granularity not in ("minute", "hour", "day"):
-        granularity = "day"
-    summary = await asyncio.to_thread(_metrics.get_metrics_summary, granularity)
-    return web.json_response(summary)
+    """Prometheus メトリクスのスナップショットを JSON で返す（グラフ描画用）"""
+    snapshot = await asyncio.to_thread(_prom.get_snapshot)
+    return web.json_response(snapshot)
 
 
 # ---------------------------------------------------------------------------

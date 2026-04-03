@@ -234,6 +234,128 @@ class TestHandleMetrics:
 
 
 # ---------------------------------------------------------------------------
+# get_snapshot のテスト
+# ---------------------------------------------------------------------------
+
+class TestGetSnapshot:
+    """get_snapshot 関数のテスト"""
+
+    def test_get_snapshot_returns_required_keys(self):
+        """get_snapshot が必須キーを含む辞書を返すこと"""
+        from src import prometheus_exporter as prom
+        snapshot = prom.get_snapshot()
+        required_keys = [
+            "messages_total",
+            "voice_play_total",
+            "errors_total",
+            "voicevox_requests_total",
+            "voicevox_errors_total",
+            "voicevox_latency_avg_ms",
+            "voicevox_latency_count",
+            "voicevox_latency_buckets",
+            "commands",
+            "uptime_seconds",
+        ]
+        for key in required_keys:
+            assert key in snapshot, f"キー '{key}' が存在しません"
+
+    def test_get_snapshot_latency_avg_ms_is_none_when_no_data(self):
+        """レイテンシ計測なしの場合 voicevox_latency_avg_ms は None であること"""
+        ns = _make_exporter()
+        # observe を呼ばない状態
+        import types
+        import time as _time
+
+        def get_snapshot_ns():
+            ns.update_dynamic_metrics()
+
+            def _counter_total(metric):
+                for mf in metric.collect():
+                    for s in mf.samples:
+                        if s.name.endswith("_total"):
+                            return int(s.value)
+                return 0
+
+            lat_sum = 0.0
+            lat_count = 0.0
+            for mf in ns.voicevox_latency_seconds.collect():
+                for s in mf.samples:
+                    if s.name.endswith("_sum"):
+                        lat_sum = s.value
+                    elif s.name.endswith("_count"):
+                        lat_count = s.value
+
+            avg_ms = round(lat_sum / lat_count * 1000, 1) if lat_count > 0 else None
+            return {"voicevox_latency_avg_ms": avg_ms, "voicevox_latency_count": int(lat_count)}
+
+        result = get_snapshot_ns()
+        assert result["voicevox_latency_avg_ms"] is None
+        assert result["voicevox_latency_count"] == 0
+
+    def test_get_snapshot_latency_avg_ms_computed_correctly(self):
+        """レイテンシ計測後に voicevox_latency_avg_ms が正しく計算されること"""
+        ns = _make_exporter()
+        ns.voicevox_latency_seconds.observe(0.1)
+        ns.voicevox_latency_seconds.observe(0.3)
+
+        lat_sum = lat_count = 0.0
+        for mf in ns.voicevox_latency_seconds.collect():
+            for s in mf.samples:
+                if s.name.endswith("_sum"):
+                    lat_sum = s.value
+                elif s.name.endswith("_count"):
+                    lat_count = s.value
+
+        avg_ms = round(lat_sum / lat_count * 1000, 1) if lat_count > 0 else None
+        assert avg_ms == pytest.approx(200.0, abs=1.0)
+        assert lat_count == 2
+
+    def test_get_snapshot_commands_populated_after_inc(self):
+        """コマンドカウンタをインクリメントすると commands に反映されること"""
+        ns = _make_exporter()
+        ns.commands_total.labels(command="join").inc()
+        ns.commands_total.labels(command="join").inc()
+        ns.commands_total.labels(command="leave").inc()
+
+        cmds: dict = {}
+        for mf in ns.commands_total.collect():
+            for s in mf.samples:
+                if s.name.endswith("_total") and "command" in s.labels:
+                    cmds[s.labels["command"]] = int(s.value)
+
+        assert cmds.get("join") == 2
+        assert cmds.get("leave") == 1
+
+    def test_get_snapshot_buckets_sorted_by_le(self):
+        """voicevox_latency_buckets が le 昇順に返ること"""
+        from src import prometheus_exporter as prom
+        snapshot = prom.get_snapshot()
+        buckets = snapshot["voicevox_latency_buckets"]
+        if len(buckets) >= 2:
+            for i in range(len(buckets) - 1):
+                assert buckets[i]["le"] <= buckets[i + 1]["le"]
+
+    def test_get_snapshot_uptime_is_non_negative(self):
+        """uptime_seconds が 0 以上であること"""
+        from src import prometheus_exporter as prom
+        snapshot = prom.get_snapshot()
+        assert snapshot["uptime_seconds"] >= 0
+
+    def test_get_snapshot_voice_play_total_increments(self):
+        """voice_play_total をインクリメントすると反映されること"""
+        ns = _make_exporter()
+        ns.voice_play_total.inc()
+        ns.voice_play_total.inc()
+
+        total = 0
+        for mf in ns.voice_play_total.collect():
+            for s in mf.samples:
+                if s.name.endswith("_total"):
+                    total = int(s.value)
+        assert total == 2
+
+
+# ---------------------------------------------------------------------------
 # ダッシュボードに /metrics ルートが追加されていることのテスト
 # ---------------------------------------------------------------------------
 

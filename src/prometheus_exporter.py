@@ -107,6 +107,67 @@ def update_dynamic_metrics() -> None:
 # aiohttp ハンドラー
 # ---------------------------------------------------------------------------
 
+def get_snapshot() -> dict:
+    """ダッシュボード用に Prometheus メトリクスの現在値をスナップショットとして返す。
+
+    Returns:
+        dict: 以下のキーを持つ辞書
+            messages_total            : 受信メッセージ数（累積）
+            voice_play_total          : 音声再生回数（累積）
+            errors_total              : Bot 内部エラー数（累積）
+            voicevox_requests_total   : VOICEVOX API 呼び出し数（累積）
+            voicevox_errors_total     : VOICEVOX エラー数（累積）
+            voicevox_latency_avg_ms   : VOICEVOX レイテンシ平均値（ms）、データなしは None
+            voicevox_latency_count    : レイテンシ計測件数
+            voicevox_latency_buckets  : ヒストグラムバケット [{le, count}, ...]
+            commands                  : コマンド別累積実行数 {name: count}
+            uptime_seconds            : 稼働時間（秒）
+    """
+    update_dynamic_metrics()
+
+    def _counter_total(metric) -> int:
+        for mf in metric.collect():
+            for s in mf.samples:
+                if s.name.endswith("_total"):
+                    return int(s.value)
+        return 0
+
+    # コマンド別カウント
+    cmds: dict[str, int] = {}
+    for mf in commands_total.collect():
+        for s in mf.samples:
+            if s.name.endswith("_total") and "command" in s.labels:
+                cmds[s.labels["command"]] = int(s.value)
+
+    # レイテンシヒストグラム
+    lat_sum = 0.0
+    lat_count = 0.0
+    lat_buckets: list[dict] = []
+    for mf in voicevox_latency_seconds.collect():
+        for s in mf.samples:
+            if s.name.endswith("_sum"):
+                lat_sum = s.value
+            elif s.name.endswith("_count"):
+                lat_count = s.value
+            elif s.name.endswith("_bucket") and s.labels.get("le") != "+Inf":
+                lat_buckets.append({"le": float(s.labels["le"]), "count": int(s.value)})
+
+    avg_ms: Optional[float] = round(lat_sum / lat_count * 1000, 1) if lat_count > 0 else None
+
+    return {
+        "messages_total": _counter_total(messages_total),
+        "voice_play_total": _counter_total(voice_play_total),
+        "errors_total": _counter_total(errors_total),
+        "voicevox_requests_total": _counter_total(voicevox_requests_total),
+        "voicevox_errors_total": _counter_total(voicevox_errors_total),
+        "voicevox_latency_avg_ms": avg_ms,
+        "voicevox_latency_count": int(lat_count),
+        "voicevox_latency_buckets": sorted(lat_buckets, key=lambda x: x["le"]),
+        "commands": cmds,
+        "uptime_seconds": round(time.monotonic() - _start_time, 1),
+    }
+
+
 async def handle_metrics(_request: web.Request) -> web.Response:
     """Prometheus 形式のメトリクスを返すエンドポイント"""
     update_dynamic_metrics()
