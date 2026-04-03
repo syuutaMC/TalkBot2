@@ -69,51 +69,6 @@ services:
       # Prometheus メトリクス共有ディレクトリ（Bot と共有）
       - prometheus_data:/app/prometheus_data
 
-  # Prometheus サーバー (http://localhost:9090)
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: talkbot2_prometheus
-    depends_on:
-      - dashboard
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_metrics:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    environment:
-      - TZ=Asia/Tokyo
-    restart: unless-stopped
-
-  # Grafana ダッシュボード (http://localhost:3000)
-  grafana:
-    image: grafana/grafana:latest
-    container_name: talkbot2_grafana
-    depends_on:
-      - prometheus
-    ports:
-      - "3000:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=http://localhost:3000
-      - TZ=Asia/Tokyo
-    restart: unless-stopped
-
 volumes:
   # Bot と dashboard が Prometheus メトリクスファイルを共有するための名前付きボリューム
   prometheus_data:
-  # Prometheus の時系列データ保存用ボリューム
-  prometheus_metrics:
-  # Grafana のデータ保存用ボリューム
-  grafana_data:
