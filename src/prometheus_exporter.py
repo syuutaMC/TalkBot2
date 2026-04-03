@@ -107,6 +107,21 @@ def update_dynamic_metrics() -> None:
 # aiohttp ハンドラー
 # ---------------------------------------------------------------------------
 
+def _collect_all() -> list:
+    """現在のモードに応じてすべてのメトリクスを収集して返す。
+
+    PROMETHEUS_MULTIPROC_DIR が設定されている場合はマルチプロセスモード
+    （ファイルベース）で全プロセス分を集約し、未設定の場合はモジュールレベルの
+    レジストリから収集する。
+    """
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        from prometheus_client import multiprocess as _mp
+        mp_reg = CollectorRegistry()
+        _mp.MultiProcessCollector(mp_reg)
+        return list(mp_reg.collect())
+    return list(registry.collect())
+
+
 def get_snapshot() -> dict[str, Any]:
     """ダッシュボード用に Prometheus メトリクスの現在値をスナップショットとして返す。
 
@@ -125,44 +140,55 @@ def get_snapshot() -> dict[str, Any]:
     """
     update_dynamic_metrics()
 
-    def _counter_total(metric) -> int:
-        for mf in metric.collect():
+    collected = _collect_all()
+
+    def _counter_total(sample_name: str) -> int:
+        """指定されたサンプル名（_total 付き）の値をすべてのプロセス分合計して返す。"""
+        total = 0
+        for mf in collected:
             for s in mf.samples:
-                if s.name.endswith("_total"):
-                    return int(s.value)
-        return 0
+                if s.name == sample_name and not s.labels:
+                    total += int(s.value)
+        return total
 
     # コマンド別カウント
     cmds: dict[str, int] = {}
-    for mf in commands_total.collect():
-        for s in mf.samples:
-            if s.name.endswith("_total") and "command" in s.labels:
-                cmds[s.labels["command"]] = int(s.value)
-
     # レイテンシヒストグラム
     lat_sum = 0.0
     lat_count = 0.0
-    lat_buckets: list[dict] = []
-    for mf in voicevox_latency_seconds.collect():
+    lat_buckets_map: dict[float, int] = {}
+
+    for mf in collected:
         for s in mf.samples:
-            if s.name.endswith("_sum"):
-                lat_sum = s.value
-            elif s.name.endswith("_count"):
-                lat_count = s.value
-            elif s.name.endswith("_bucket") and s.labels.get("le") != "+Inf":
-                lat_buckets.append({"le": float(s.labels["le"]), "count": int(s.value)})
+            # コマンドカウンター（command ラベル付き）
+            if s.name == "talkbot_commands_total" and s.labels.get("command") is not None:
+                cmd = s.labels["command"]
+                cmds[cmd] = cmds.get(cmd, 0) + int(s.value)
+            # ヒストグラム（メトリクスファミリー名で絞り込む）
+            if mf.name == "talkbot_voicevox_latency_seconds":
+                if s.name.endswith("_sum"):
+                    lat_sum += s.value
+                elif s.name.endswith("_count"):
+                    lat_count += s.value
+                elif s.name.endswith("_bucket") and s.labels.get("le") != "+Inf":
+                    le_val = float(s.labels["le"])
+                    lat_buckets_map[le_val] = lat_buckets_map.get(le_val, 0) + int(s.value)
 
     avg_ms: Optional[float] = round(lat_sum / lat_count * 1000, 1) if lat_count > 0 else None
+    lat_buckets = sorted(
+        [{"le": le, "count": cnt} for le, cnt in lat_buckets_map.items()],
+        key=lambda x: x["le"],
+    )
 
     return {
-        "messages_total": _counter_total(messages_total),
-        "voice_play_total": _counter_total(voice_play_total),
-        "errors_total": _counter_total(errors_total),
-        "voicevox_requests_total": _counter_total(voicevox_requests_total),
-        "voicevox_errors_total": _counter_total(voicevox_errors_total),
+        "messages_total": _counter_total("talkbot_messages_total"),
+        "voice_play_total": _counter_total("talkbot_voice_play_total"),
+        "errors_total": _counter_total("talkbot_errors_total"),
+        "voicevox_requests_total": _counter_total("talkbot_voicevox_requests_total"),
+        "voicevox_errors_total": _counter_total("talkbot_voicevox_errors_total"),
         "voicevox_latency_avg_ms": avg_ms,
         "voicevox_latency_count": int(lat_count),
-        "voicevox_latency_buckets": sorted(lat_buckets, key=lambda x: x["le"]),
+        "voicevox_latency_buckets": lat_buckets,
         "commands": cmds,
         "uptime_seconds": round(time.monotonic() - _start_time, 1),
     }
@@ -171,7 +197,13 @@ def get_snapshot() -> dict[str, Any]:
 async def handle_metrics(_request: web.Request) -> web.Response:
     """Prometheus 形式のメトリクスを返すエンドポイント"""
     update_dynamic_metrics()
-    output = generate_latest(registry)
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        from prometheus_client import multiprocess as _mp
+        mp_reg = CollectorRegistry()
+        _mp.MultiProcessCollector(mp_reg)
+        output = generate_latest(mp_reg)
+    else:
+        output = generate_latest(registry)
     return web.Response(
         body=output,
         headers={"Content-Type": CONTENT_TYPE_LATEST},
