@@ -302,72 +302,68 @@ class TestHandleApiMetrics:
     """GET /api/metrics のテスト"""
 
     @pytest.mark.asyncio
-    async def test_metrics_returns_json_with_required_keys(self, tmp_path):
-        """メトリクス API が latency / errors / commands キーを含む JSON を返すこと"""
-        mock_summary = {
-            "latency": {"labels": [], "values": [], "avg_ms": None},
-            "errors":  {"labels": [], "values": [], "total": 0},
-            "commands": {"labels": [], "values": []},
-            "granularity": "day",
+    async def test_metrics_returns_json_with_prometheus_keys(self, tmp_path):
+        """メトリクス API が Prometheus スナップショットの必須キーを含む JSON を返すこと"""
+        mock_snapshot = {
+            "messages_total": 0,
+            "voice_play_total": 0,
+            "errors_total": 0,
+            "voicevox_requests_total": 0,
+            "voicevox_errors_total": 0,
+            "voicevox_latency_avg_ms": None,
+            "voicevox_latency_count": 0,
+            "voicevox_latency_buckets": [],
+            "commands": {},
+            "uptime_seconds": 0.0,
         }
         request = MagicMock()
-        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)):
+        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_snapshot)):
             response = await handle_api_metrics(request)
         assert response.status == 200
 
     @pytest.mark.asyncio
-    async def test_metrics_passes_granularity_minute(self, tmp_path):
-        """granularity=minute パラメータが get_metrics_summary に渡されること"""
-        mock_summary = {
-            "latency": {"labels": [], "values": [], "avg_ms": None},
-            "errors":  {"labels": [], "values": [], "total": 0},
-            "commands": {"labels": [], "values": []},
-            "granularity": "minute",
+    async def test_metrics_calls_get_snapshot(self, tmp_path):
+        """handle_api_metrics が prom.get_snapshot を呼び出すこと"""
+        mock_snapshot = {
+            "messages_total": 5,
+            "voice_play_total": 3,
+            "errors_total": 1,
+            "voicevox_requests_total": 3,
+            "voicevox_errors_total": 0,
+            "voicevox_latency_avg_ms": 250.0,
+            "voicevox_latency_count": 3,
+            "voicevox_latency_buckets": [{"le": 0.5, "count": 3}],
+            "commands": {"join": 2},
+            "uptime_seconds": 60.0,
         }
         request = MagicMock()
-        request.rel_url.query.get = MagicMock(return_value="minute")
-        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)) as mock_thread:
+        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_snapshot)) as mock_thread:
             response = await handle_api_metrics(request)
         assert response.status == 200
         mock_thread.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_metrics_passes_granularity_hour(self, tmp_path):
-        """granularity=hour パラメータが get_metrics_summary に渡されること"""
-        mock_summary = {
-            "latency": {"labels": [], "values": [], "avg_ms": None},
-            "errors":  {"labels": [], "values": [], "total": 0},
-            "commands": {"labels": [], "values": []},
-            "granularity": "hour",
+    async def test_metrics_response_contains_commands(self, tmp_path):
+        """メトリクスレスポンスが commands キーを含むこと"""
+        mock_snapshot = {
+            "messages_total": 0,
+            "voice_play_total": 0,
+            "errors_total": 0,
+            "voicevox_requests_total": 0,
+            "voicevox_errors_total": 0,
+            "voicevox_latency_avg_ms": None,
+            "voicevox_latency_count": 0,
+            "voicevox_latency_buckets": [],
+            "commands": {"join": 1, "leave": 1},
+            "uptime_seconds": 10.0,
         }
         request = MagicMock()
-        request.rel_url.query.get = MagicMock(return_value="hour")
-        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)) as mock_thread:
+        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_snapshot)):
             response = await handle_api_metrics(request)
-        assert response.status == 200
-        mock_thread.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_metrics_invalid_granularity_falls_back_to_day(self):
-        """不正な granularity の場合は day にフォールバックすること"""
-        mock_summary = {
-            "latency": {"labels": [], "values": [], "avg_ms": None},
-            "errors":  {"labels": [], "values": [], "total": 0},
-            "commands": {"labels": [], "values": []},
-            "granularity": "day",
-        }
-        request = MagicMock()
-        request.rel_url.query.get = MagicMock(return_value="invalid")
-        with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_summary)) as mock_thread:
-            response = await handle_api_metrics(request)
-        assert response.status == 200
-        # フォールバック後は "day" で呼ばれること
-        args = mock_thread.call_args[0]
-        assert args[1] == "day"
-        # レスポンス JSON に granularity: "day" が含まれること
         import json as _json
         body = _json.loads(response.body)
-        assert body["granularity"] == "day"
+        assert "commands" in body
+        assert body["commands"]["join"] == 1
 
     @pytest.mark.asyncio
     async def test_api_status_dictionary_count_aggregates_per_guild(self, aiohttp_client, app, tmp_path):

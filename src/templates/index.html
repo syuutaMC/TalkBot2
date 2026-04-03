@@ -177,21 +177,6 @@
     }
     canvas { width: 100% !important; }
 
-    /* ===== 粒度セレクター ===== */
-    .gran-btns { display: flex; gap: 0.4rem; }
-    .gran-btn {
-      background: #1e293b;
-      color: #94a3b8;
-      border: 1px solid #334155;
-      border-radius: 0.4rem;
-      padding: 0.25rem 0.65rem;
-      font-size: 0.78rem;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-    }
-    .gran-btn:hover { background: #263348; color: #e2e8f0; }
-    .gran-btn.active { background: #6366f1; color: #fff; border-color: #6366f1; }
-
     /* ===== フッター ===== */
     footer {
       text-align: center;
@@ -253,36 +238,19 @@
   </div>
 
   <!-- ===== メトリクスグラフ ===== -->
-  <div class="section-title" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
-    <span id="metricsTitle">📈 メトリクス（過去 30 日間）</span>
-    <div class="gran-btns">
-      <button class="gran-btn active" data-gran="day"    onclick="setGranularity('day')">日単位</button>
-      <button class="gran-btn"        data-gran="hour"   onclick="setGranularity('hour')">時間単位</button>
-      <button class="gran-btn"        data-gran="minute" onclick="setGranularity('minute')">分単位</button>
-    </div>
+  <div class="section-title">
+    <span>📈 メトリクス（Prometheus 累積値）</span>
   </div>
   <div class="chart-grid">
 
     <div class="chart-card">
-      <div class="chart-title" id="latencyChartTitle">⚡ VOICEVOX レイテンシ（日平均 ms）</div>
+      <div class="chart-title">⚡ VOICEVOX レイテンシ分布（ヒストグラム）</div>
       <canvas id="chartLatency" height="200"></canvas>
       <div class="chart-sub" id="latencyAvg"></div>
     </div>
 
     <div class="chart-card">
-      <div class="chart-title" id="errorsChartTitle">❌ 音声生成エラー数（日別件数）</div>
-      <canvas id="chartErrors" height="200"></canvas>
-      <div class="chart-sub" id="errorsTotal"></div>
-    </div>
-
-    <div class="chart-card">
-      <div class="chart-title" id="ttsChartTitle">📢 読み上げ件数（日別）</div>
-      <canvas id="chartTtsRequests" height="200"></canvas>
-      <div class="chart-sub" id="ttsTotal"></div>
-    </div>
-
-    <div class="chart-card">
-      <div class="chart-title">🎮 コマンド利用回数（過去 30 日間）</div>
+      <div class="chart-title">🎮 コマンド利用回数（累積）</div>
       <canvas id="chartCommands" height="200"></canvas>
     </div>
 
@@ -387,31 +355,15 @@
 
   // ---------- チャートインスタンス ----------
   let chartLatency = null;
-  let chartErrors  = null;
-  let chartTtsRequests = null;
   let chartCommands = null;
 
   function initCharts() {
-    const latencyCtx      = document.getElementById("chartLatency").getContext("2d");
-    const errorsCtx       = document.getElementById("chartErrors").getContext("2d");
-    const ttsRequestsCtx  = document.getElementById("chartTtsRequests").getContext("2d");
-    const commandsCtx     = document.getElementById("chartCommands").getContext("2d");
+    const latencyCtx  = document.getElementById("chartLatency").getContext("2d");
+    const commandsCtx = document.getElementById("chartCommands").getContext("2d");
 
     chartLatency = new Chart(latencyCtx, {
-      type: "line",
-      data: { labels: [], datasets: [{ data: [], borderColor: "#6366f1", backgroundColor: "rgba(99,102,241,0.1)", fill: true, tension: 0.3, spanGaps: true, pointRadius: 2 }] },
-      options: { ...CHART_OPTS_BASE, scales: { ...CHART_OPTS_BASE.scales, y: { ...CHART_OPTS_BASE.scales.y, title: { display: true, text: "ms", color: "#64748b", font: { size: 10 } } } } }
-    });
-
-    chartErrors = new Chart(errorsCtx, {
       type: "bar",
-      data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(239,68,68,0.7)", borderColor: "#ef4444", borderWidth: 1 }] },
-      options: { ...CHART_OPTS_BASE, scales: { ...CHART_OPTS_BASE.scales, y: { ...CHART_OPTS_BASE.scales.y, title: { display: true, text: "件数", color: "#64748b", font: { size: 10 } } } } }
-    });
-
-    chartTtsRequests = new Chart(ttsRequestsCtx, {
-      type: "bar",
-      data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(251,191,36,0.7)", borderColor: "#fbbf24", borderWidth: 1 }] },
+      data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(99,102,241,0.7)", borderColor: "#6366f1", borderWidth: 1 }] },
       options: { ...CHART_OPTS_BASE, scales: { ...CHART_OPTS_BASE.scales, y: { ...CHART_OPTS_BASE.scales.y, title: { display: true, text: "件数", color: "#64748b", font: { size: 10 } } } } }
     });
 
@@ -420,49 +372,6 @@
       data: { labels: [], datasets: [{ data: [], backgroundColor: "rgba(34,197,94,0.7)", borderColor: "#22c55e", borderWidth: 1 }] },
       options: { ...CHART_OPTS_BASE, indexAxis: "y", scales: { x: { ...CHART_OPTS_BASE.scales.x, beginAtZero: true, title: { display: true, text: "回数", color: "#64748b", font: { size: 10 } } }, y: { ticks: { font: { size: 10 } }, grid: { color: "#334155" } } } }
     });
-  }
-
-  // ---------- 粒度設定 ----------
-  let currentGranularity = "day";
-
-  const GRANULARITY_INFO = {
-    "minute": {
-      period: "過去 60 分間",
-      latencyTitle: "⚡ VOICEVOX レイテンシ（分平均 ms）",
-      errorsTitle:  "❌ 音声生成エラー数（分別件数）",
-      ttsTitle:     "📢 読み上げ件数（分別）",
-      avgLabel:     "60 分平均",
-      totalLabel:   "60 分合計",
-    },
-    "hour": {
-      period: "過去 24 時間",
-      latencyTitle: "⚡ VOICEVOX レイテンシ（時間平均 ms）",
-      errorsTitle:  "❌ 音声生成エラー数（時間別件数）",
-      ttsTitle:     "📢 読み上げ件数（時間別）",
-      avgLabel:     "24 時間平均",
-      totalLabel:   "24 時間合計",
-    },
-    "day": {
-      period: "過去 30 日間",
-      latencyTitle: "⚡ VOICEVOX レイテンシ（日平均 ms）",
-      errorsTitle:  "❌ 音声生成エラー数（日別件数）",
-      ttsTitle:     "📢 読み上げ件数（日別）",
-      avgLabel:     "30 日平均",
-      totalLabel:   "30 日合計",
-    },
-  };
-
-  function setGranularity(gran) {
-    currentGranularity = gran;
-    const info = GRANULARITY_INFO[gran] || GRANULARITY_INFO["day"];
-    document.querySelectorAll(".gran-btn").forEach(btn => {
-      btn.classList.toggle("active", btn.dataset.gran === gran);
-    });
-    document.getElementById("metricsTitle").textContent        = `📈 メトリクス（${info.period}）`;
-    document.getElementById("latencyChartTitle").textContent   = info.latencyTitle;
-    document.getElementById("errorsChartTitle").textContent    = info.errorsTitle;
-    document.getElementById("ttsChartTitle").textContent       = info.ttsTitle;
-    loadMetrics();
   }
 
   // ---------- ヘルパー ----------
@@ -478,50 +387,39 @@
   // ---------- メトリクスグラフ ----------
   async function loadMetrics() {
     try {
-      const info = GRANULARITY_INFO[currentGranularity] || GRANULARITY_INFO["day"];
-      const d = await fetchJSON(`/api/metrics?granularity=${currentGranularity}`);
+      const d = await fetchJSON("/api/metrics");
 
-      // レイテンシ
-      chartLatency.data.labels   = d.latency.labels;
-      chartLatency.data.datasets[0].data = d.latency.values;
-      chartLatency.update();
-      if (d.latency.avg_ms != null) {
-        const minMax = d.latency.min_ms != null
-          ? ` / min: ${Number(d.latency.min_ms).toFixed(1)} ms / max: ${Number(d.latency.max_ms).toFixed(1)} ms`
-          : "";
+      // レイテンシヒストグラム（cumulative buckets → per-bucket）
+      const buckets = d.voicevox_latency_buckets || [];
+      if (buckets.length) {
+        const bucketLabels = buckets.map(b => `≤${b.le}s`);
+        const bucketCounts = buckets.map((b, i) => i === 0 ? b.count : b.count - buckets[i - 1].count);
+        chartLatency.data.labels = bucketLabels;
+        chartLatency.data.datasets[0].data = bucketCounts;
+        chartLatency.update();
+      }
+      if (d.voicevox_latency_avg_ms != null) {
         document.getElementById("latencyAvg").textContent =
-          `${info.avgLabel}: ${Number(d.latency.avg_ms).toFixed(1)} ms${minMax}`;
+          `平均: ${Number(d.voicevox_latency_avg_ms).toFixed(1)} ms（${d.voicevox_latency_count} 件）`;
       } else {
         document.getElementById("latencyAvg").textContent = "データなし";
       }
 
-      // エラー
-      chartErrors.data.labels  = d.errors.labels;
-      chartErrors.data.datasets[0].data = d.errors.values;
-      chartErrors.update();
-      document.getElementById("errorsTotal").textContent =
-        `${info.totalLabel}: ${d.errors.total} 件`;
-
-      // 読み上げ件数
-      if (d.tts_requests) {
-        document.getElementById("ttsChartTitle").textContent = info.ttsTitle;
-        chartTtsRequests.data.labels  = d.tts_requests.labels;
-        chartTtsRequests.data.datasets[0].data = d.tts_requests.values;
-        chartTtsRequests.update();
-        document.getElementById("ttsTotal").textContent =
-          `${info.totalLabel}: ${d.tts_requests.total} 件`;
-        document.getElementById("ttsCount").textContent = d.tts_requests.total;
-        document.getElementById("ttsCountSub").textContent = info.period;
-      }
+      // 読み上げ件数カード
+      document.getElementById("ttsCount").textContent = d.voice_play_total ?? 0;
+      document.getElementById("ttsCountSub").textContent = "累積合計";
 
       // コマンド総使用回数カード
-      const cmdTotal = d.commands.values.reduce((a, b) => a + b, 0);
+      const cmds = d.commands ?? {};
+      const cmdTotal = Object.values(cmds).reduce((a, b) => a + b, 0);
       document.getElementById("cmdTotalCount").textContent = cmdTotal;
-      document.getElementById("cmdTotalCountSub").textContent = info.period;
+      document.getElementById("cmdTotalCountSub").textContent = "累積合計";
 
-      // コマンド
-      chartCommands.data.labels  = d.commands.labels;
-      chartCommands.data.datasets[0].data = d.commands.values;
+      // コマンドバーチャート
+      const cmdLabels = Object.keys(cmds).sort();
+      const cmdValues = cmdLabels.map(k => cmds[k]);
+      chartCommands.data.labels = cmdLabels;
+      chartCommands.data.datasets[0].data = cmdValues;
       chartCommands.update();
 
     } catch (e) {
