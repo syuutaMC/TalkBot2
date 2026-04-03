@@ -36,6 +36,9 @@ TEST_GUILD = discord.Object(id=int(GUILD_ID)) if GUILD_ID else None
 # デフォルト話者ID（VOICEVOX の標準音声）
 DEFAULT_SPEAKER_ID = 1
 
+# 同一話者IDでこの回数連続して音声合成に失敗した場合に broken としてマーク
+BROKEN_SPEAKER_THRESHOLD = 3
+
 # Intentsの設定
 intents = discord.Intents.default()
 intents.message_content = True
@@ -102,8 +105,8 @@ class VoiceBot(commands.Bot):
         self.voice_queues: Dict[int, asyncio.Queue] = {}
         # 音声再生中フラグ
         self.is_playing: Dict[int, bool] = {}
-        # 音声合成に失敗した話者IDのセット（CUDAエラー等で使用不可な話者を記録）
-        self.broken_speaker_ids: Set[int] = set()
+        # 話者IDごとの連続失敗回数（BROKEN_SPEAKER_THRESHOLD 回に達した話者を使用不可とする）
+        self.speaker_fail_counts: Dict[int, int] = {}
     
     def _load_config(self):
         """設定ファイルを読み込む"""
@@ -381,8 +384,8 @@ async def voice(interaction: discord.Interaction, speaker_id: int):
         await interaction.response.send_message("話者IDは0以上を指定してください", ephemeral=True)
         return
     
-    # 使用不可（エラー済み）の話者を拒否する
-    if speaker_id in bot.broken_speaker_ids:
+    # 使用不可（連続エラー）の話者を拒否する
+    if bot.speaker_fail_counts.get(speaker_id, 0) >= BROKEN_SPEAKER_THRESHOLD:
         await interaction.response.send_message(
             f"話者ID {speaker_id} は現在使用できません（音声合成エラーが発生しています）。"
             "`/speakers` コマンドで利用可能な話者を確認してください。",
@@ -425,7 +428,7 @@ async def speakers(interaction: discord.Interaction):
         for style in speaker.get("styles", []):
             style_name = style.get("name", "")
             style_id = style.get("id", 0)
-            if style_id in bot.broken_speaker_ids:
+            if style_id in bot.speaker_fail_counts and bot.speaker_fail_counts[style_id] >= BROKEN_SPEAKER_THRESHOLD:
                 continue  # 使用不可な話者はリストから除外
             message += f"• **{speaker_name}** - {style_name} (ID: `{style_id}`)\n"
     
@@ -591,23 +594,33 @@ async def play_voice_queue(guild: discord.Guild):
             if not audio_data:
                 prom.errors_total.inc()
                 prom.voicevox_errors_total.inc()
-                # 話者IDが原因のエラーの可能性がある場合は broken として記録し、
-                # そのユーザーの話者設定をデフォルトにリセットする
+                # 連続失敗カウントを更新し、閾値に達した場合のみ broken としてマーク
                 failed_speaker = item["speaker_id"]
                 if failed_speaker != DEFAULT_SPEAKER_ID:
-                    if failed_speaker not in bot.broken_speaker_ids:
-                        bot.broken_speaker_ids.add(failed_speaker)
-                        print(f"⚠ 話者ID {failed_speaker} で音声合成に失敗しました。この話者IDを使用不可としてマークします。")
-                    # 該当話者を使用しているユーザーをデフォルトにリセット
-                    user_id = item.get("user_id")
-                    if user_id and bot.user_speakers.get(user_id) == failed_speaker:
-                        bot.user_speakers[user_id] = DEFAULT_SPEAKER_ID
-                        bot._save_config()
-                        print(f"⚠ ユーザー {user_id} の話者IDを {failed_speaker} からデフォルト ({DEFAULT_SPEAKER_ID}) にリセットしました。")
+                    count = bot.speaker_fail_counts.get(failed_speaker, 0) + 1
+                    bot.speaker_fail_counts[failed_speaker] = count
+                    if count >= BROKEN_SPEAKER_THRESHOLD:
+                        print(
+                            f"⚠ 話者ID {failed_speaker} で {count} 回連続して音声合成に失敗しました。"
+                            "この話者IDを使用不可としてマークします。"
+                        )
+                        # 該当話者を使用しているユーザーをデフォルトにリセット
+                        user_id = item.get("user_id")
+                        if user_id and bot.user_speakers.get(user_id) == failed_speaker:
+                            bot.user_speakers[user_id] = DEFAULT_SPEAKER_ID
+                            bot._save_config()
+                            print(
+                                f"⚠ ユーザー {user_id} の話者IDを {failed_speaker} から"
+                                f"デフォルト ({DEFAULT_SPEAKER_ID}) にリセットしました。"
+                            )
+                    else:
+                        print(f"⚠ 話者ID {failed_speaker} で音声合成に失敗しました（{count}/{BROKEN_SPEAKER_THRESHOLD} 回）。")
                 continue
             
             prom.voicevox_latency_seconds.observe(elapsed_ms / 1000)
             prom.voice_play_total.inc()
+            # 成功したので連続失敗カウントをリセット
+            bot.speaker_fail_counts.pop(item["speaker_id"], None)
 
             # 一時ファイルに保存
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:

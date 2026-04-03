@@ -1213,13 +1213,13 @@ class TestVoiceCommandValidation:
 
     @pytest.mark.asyncio
     async def test_voice_rejects_broken_speaker_id(self, tmp_path):
-        """broken_speaker_ids に含まれる話者IDは拒否されること"""
+        """speaker_fail_counts が閾値以上の話者IDは拒否されること"""
         import src.bot as bot_module
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
-            # bot インスタンスに broken speaker を追加
-            bot_module.bot.broken_speaker_ids = {42}
+            # 閾値以上の失敗カウントをセット
+            bot_module.bot.speaker_fail_counts = {42: bot_module.BROKEN_SPEAKER_THRESHOLD}
             try:
                 interaction = self._make_interaction()
                 await voice.callback(interaction, speaker_id=42)
@@ -1229,7 +1229,7 @@ class TestVoiceCommandValidation:
                 assert "42" in msg
                 assert "使用できません" in msg
             finally:
-                bot_module.bot.broken_speaker_ids = set()
+                bot_module.bot.speaker_fail_counts = {}
 
     @pytest.mark.asyncio
     async def test_voice_rejects_nonexistent_speaker_id_when_voicevox_available(self, tmp_path):
@@ -1238,7 +1238,7 @@ class TestVoiceCommandValidation:
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
-            bot_module.bot.broken_speaker_ids = set()
+            bot_module.bot.speaker_fail_counts = {}
             with patch.object(bot_module.bot.voicevox, "get_valid_speaker_ids", AsyncMock(return_value={1, 2, 3})):
                 interaction = self._make_interaction()
                 await voice.callback(interaction, speaker_id=999)
@@ -1255,7 +1255,7 @@ class TestVoiceCommandValidation:
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
-            bot_module.bot.broken_speaker_ids = set()
+            bot_module.bot.speaker_fail_counts = {}
             with patch.object(bot_module.bot.voicevox, "get_valid_speaker_ids", AsyncMock(return_value={1, 2, 3})):
                 interaction = self._make_interaction(user_id=77777)
                 await voice.callback(interaction, speaker_id=2)
@@ -1273,7 +1273,7 @@ class TestVoiceCommandValidation:
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
-            bot_module.bot.broken_speaker_ids = set()
+            bot_module.bot.speaker_fail_counts = {}
             with patch.object(bot_module.bot.voicevox, "get_valid_speaker_ids", AsyncMock(return_value=set())):
                 interaction = self._make_interaction(user_id=88888)
                 await voice.callback(interaction, speaker_id=50)
@@ -1286,29 +1286,28 @@ class TestVoiceCommandValidation:
 
 
 class TestBrokenSpeakerTracking:
-    """音声合成エラー時の broken_speaker_ids 追跡テスト"""
+    """音声合成エラー時の speaker_fail_counts 追跡テスト"""
 
     @pytest.mark.asyncio
-    async def test_broken_speaker_ids_initialized_empty(self, tmp_path):
-        """VoiceBot 初期化時に broken_speaker_ids が空集合であること"""
+    async def test_speaker_fail_counts_initialized_empty(self, tmp_path):
+        """VoiceBot 初期化時に speaker_fail_counts が空辞書であること"""
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
             bot = VoiceBot()
-            assert bot.broken_speaker_ids == set()
+            assert bot.speaker_fail_counts == {}
             await bot.close()
 
     @pytest.mark.asyncio
-    async def test_play_voice_queue_marks_speaker_as_broken_on_failure(self, tmp_path):
-        """音声合成に失敗した場合、話者IDが broken_speaker_ids に追加されること"""
+    async def test_play_voice_queue_increments_fail_count_on_failure(self, tmp_path):
+        """音声合成に失敗した場合、話者IDの失敗カウントが増加すること"""
         import src.bot as bot_module
 
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
 
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
-            # フィクスチャのセットアップ
-            bot_module.bot.broken_speaker_ids = set()
+            bot_module.bot.speaker_fail_counts = {}
             bot_module.bot.user_speakers = {999: 55}
 
             guild = MagicMock(spec=discord.Guild)
@@ -1320,28 +1319,64 @@ class TestBrokenSpeakerTracking:
             await q.put({"text": "テスト", "speaker_id": 55, "speed": 1.0, "user_id": 999})
             bot_module.bot.voice_queues[9001] = q
 
-            # 音声合成が失敗するようにモック
             bot_module.bot.voicevox.create_audio = AsyncMock(return_value=None)
 
             try:
                 await play_voice_queue(guild)
-                assert 55 in bot_module.bot.broken_speaker_ids
+                assert bot_module.bot.speaker_fail_counts.get(55, 0) == 1
             finally:
-                bot_module.bot.broken_speaker_ids = set()
+                bot_module.bot.speaker_fail_counts = {}
                 bot_module.bot.user_speakers.pop(999, None)
                 bot_module.bot.voice_queues.pop(9001, None)
                 bot_module.bot.is_playing.pop(9001, None)
 
     @pytest.mark.asyncio
-    async def test_play_voice_queue_resets_user_speaker_on_failure(self, tmp_path):
-        """音声合成に失敗した場合、ユーザーの話者IDがデフォルトにリセットされること"""
+    async def test_play_voice_queue_marks_broken_after_threshold_failures(self, tmp_path):
+        """BROKEN_SPEAKER_THRESHOLD 回連続失敗した場合にのみ broken としてマークされ、ユーザーがリセットされること"""
         import src.bot as bot_module
 
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
 
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
-            bot_module.bot.broken_speaker_ids = set()
+            threshold = bot_module.BROKEN_SPEAKER_THRESHOLD
+            # 閾値の1回前まで失敗させても broken にならないことを確認
+            bot_module.bot.speaker_fail_counts = {55: threshold - 1}
+            bot_module.bot.user_speakers = {999: 55}
+
+            guild = MagicMock(spec=discord.Guild)
+            guild.id = 9004
+            guild.voice_client = None
+
+            import asyncio
+            q = asyncio.Queue()
+            await q.put({"text": "テスト", "speaker_id": 55, "speed": 1.0, "user_id": 999})
+            bot_module.bot.voice_queues[9004] = q
+
+            bot_module.bot.voicevox.create_audio = AsyncMock(return_value=None)
+
+            try:
+                await play_voice_queue(guild)
+                # 閾値に達したのでユーザーがリセットされること
+                assert bot_module.bot.speaker_fail_counts.get(55, 0) >= threshold
+                assert bot_module.bot.user_speakers.get(999) == bot_module.DEFAULT_SPEAKER_ID
+            finally:
+                bot_module.bot.speaker_fail_counts = {}
+                bot_module.bot.user_speakers.pop(999, None)
+                bot_module.bot.voice_queues.pop(9004, None)
+                bot_module.bot.is_playing.pop(9004, None)
+
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_does_not_reset_user_before_threshold(self, tmp_path):
+        """閾値未満の失敗ではユーザーの話者IDをリセットしないこと"""
+        import src.bot as bot_module
+
+        config_file = tmp_path / "config.json"
+        db_file = tmp_path / "dictionary.db"
+
+        with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
+            # 初回失敗（カウント 0 → 1）：閾値が2以上なら broken にならない
+            bot_module.bot.speaker_fail_counts = {}
             bot_module.bot.user_speakers = {111: 77}
 
             guild = MagicMock(spec=discord.Guild)
@@ -1357,24 +1392,57 @@ class TestBrokenSpeakerTracking:
 
             try:
                 await play_voice_queue(guild)
-                # ユーザーの話者IDがデフォルトにリセットされていること
-                assert bot_module.bot.user_speakers.get(111) == bot_module.DEFAULT_SPEAKER_ID
+                if bot_module.BROKEN_SPEAKER_THRESHOLD > 1:
+                    # まだ閾値未満なのでユーザーはリセットされないこと
+                    assert bot_module.bot.user_speakers.get(111) == 77
             finally:
-                bot_module.bot.broken_speaker_ids = set()
+                bot_module.bot.speaker_fail_counts = {}
                 bot_module.bot.user_speakers.pop(111, None)
                 bot_module.bot.voice_queues.pop(9002, None)
                 bot_module.bot.is_playing.pop(9002, None)
 
     @pytest.mark.asyncio
-    async def test_play_voice_queue_does_not_reset_default_speaker_on_failure(self, tmp_path):
-        """デフォルト話者IDでの失敗時は broken_speaker_ids に追加しないこと"""
+    async def test_play_voice_queue_resets_fail_count_on_success(self, tmp_path):
+        """音声合成に成功した場合、失敗カウントがリセットされること"""
         import src.bot as bot_module
 
         config_file = tmp_path / "config.json"
         db_file = tmp_path / "dictionary.db"
 
         with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
-            bot_module.bot.broken_speaker_ids = set()
+            bot_module.bot.speaker_fail_counts = {55: 2}
+            bot_module.bot.user_speakers = {}
+
+            guild = MagicMock(spec=discord.Guild)
+            guild.id = 9005
+            guild.voice_client = None
+
+            import asyncio
+            q = asyncio.Queue()
+            await q.put({"text": "テスト", "speaker_id": 55, "speed": 1.0, "user_id": 333})
+            bot_module.bot.voice_queues[9005] = q
+
+            bot_module.bot.voicevox.create_audio = AsyncMock(return_value=b"fake_audio_data")
+
+            try:
+                await play_voice_queue(guild)
+                # 成功後は失敗カウントがリセットされること
+                assert bot_module.bot.speaker_fail_counts.get(55, 0) == 0
+            finally:
+                bot_module.bot.speaker_fail_counts = {}
+                bot_module.bot.voice_queues.pop(9005, None)
+                bot_module.bot.is_playing.pop(9005, None)
+
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_does_not_count_default_speaker_failure(self, tmp_path):
+        """デフォルト話者IDでの失敗時は失敗カウントを増やさないこと"""
+        import src.bot as bot_module
+
+        config_file = tmp_path / "config.json"
+        db_file = tmp_path / "dictionary.db"
+
+        with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
+            bot_module.bot.speaker_fail_counts = {}
             bot_module.bot.user_speakers = {}
 
             guild = MagicMock(spec=discord.Guild)
@@ -1390,9 +1458,9 @@ class TestBrokenSpeakerTracking:
 
             try:
                 await play_voice_queue(guild)
-                # デフォルト話者は broken に追加しないこと
-                assert bot_module.DEFAULT_SPEAKER_ID not in bot_module.bot.broken_speaker_ids
+                # デフォルト話者は失敗カウントを増やさないこと
+                assert bot_module.DEFAULT_SPEAKER_ID not in bot_module.bot.speaker_fail_counts
             finally:
-                bot_module.bot.broken_speaker_ids = set()
+                bot_module.bot.speaker_fail_counts = {}
                 bot_module.bot.voice_queues.pop(9003, None)
                 bot_module.bot.is_playing.pop(9003, None)
