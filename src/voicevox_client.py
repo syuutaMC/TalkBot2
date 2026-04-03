@@ -3,7 +3,7 @@ VOICEVOX Engine連携モジュール
 """
 import aiohttp
 import asyncio
-from typing import Optional
+from typing import Optional, Set
 
 
 class VoicevoxClient:
@@ -38,6 +38,21 @@ class VoicevoxClient:
         except Exception as e:
             print(f"話者一覧取得エラー: {e}")
             return []
+
+    async def get_valid_speaker_ids(self) -> Set[int]:
+        """
+        利用可能な話者スタイルIDの集合を取得
+        
+        Returns:
+            Set[int]: 有効な話者スタイルIDの集合。取得できない場合は空の集合
+        """
+        speakers = await self.get_speakers()
+        return {
+            style["id"]
+            for speaker in speakers
+            for style in speaker.get("styles", [])
+            if "id" in style
+        }
     
     async def create_audio(self, text: str, speaker_id: int = 1, speed: float = 1.0) -> Optional[bytes]:
         """

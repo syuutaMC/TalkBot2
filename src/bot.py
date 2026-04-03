@@ -33,6 +33,9 @@ DB_FILE = Path("config/dictionary.db")
 GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 TEST_GUILD = discord.Object(id=int(GUILD_ID)) if GUILD_ID else None
 
+# デフォルト話者ID（VOICEVOX の標準音声）
+DEFAULT_SPEAKER_ID = 1
+
 # Intentsの設定
 intents = discord.Intents.default()
 intents.message_content = True
@@ -99,6 +102,8 @@ class VoiceBot(commands.Bot):
         self.voice_queues: Dict[int, asyncio.Queue] = {}
         # 音声再生中フラグ
         self.is_playing: Dict[int, bool] = {}
+        # 音声合成に失敗した話者IDのセット（CUDAエラー等で使用不可な話者を記録）
+        self.broken_speaker_ids: Set[int] = set()
     
     def _load_config(self):
         """設定ファイルを読み込む"""
@@ -368,12 +373,31 @@ async def help_command(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="voice", description="読み上げ音声を変更します")
-@app_commands.describe(speaker_id="話者ID（1-60程度、詳細は/helpで確認）")
+@app_commands.describe(speaker_id="話者ID（/speakersで確認）")
 async def voice(interaction: discord.Interaction, speaker_id: int):
     """ユーザーごとの読み上げ音声を設定するコマンド"""
     
     if speaker_id < 0:
         await interaction.response.send_message("話者IDは0以上を指定してください", ephemeral=True)
+        return
+    
+    # 使用不可（エラー済み）の話者を拒否する
+    if speaker_id in bot.broken_speaker_ids:
+        await interaction.response.send_message(
+            f"話者ID {speaker_id} は現在使用できません（音声合成エラーが発生しています）。"
+            "`/speakers` コマンドで利用可能な話者を確認してください。",
+            ephemeral=True
+        )
+        return
+    
+    # VOICEVOX の話者リストで存在確認
+    valid_ids = await bot.voicevox.get_valid_speaker_ids()
+    if valid_ids and speaker_id not in valid_ids:
+        await interaction.response.send_message(
+            f"話者ID {speaker_id} は存在しません。"
+            "`/speakers` コマンドで利用可能な話者を確認してください。",
+            ephemeral=True
+        )
         return
     
     bot.user_speakers[interaction.user.id] = speaker_id
@@ -401,6 +425,8 @@ async def speakers(interaction: discord.Interaction):
         for style in speaker.get("styles", []):
             style_name = style.get("name", "")
             style_id = style.get("id", 0)
+            if style_id in bot.broken_speaker_ids:
+                continue  # 使用不可な話者はリストから除外
             message += f"• **{speaker_name}** - {style_name} (ID: `{style_id}`)\n"
     
     prom.commands_total.labels(command="speakers").inc()
@@ -509,8 +535,8 @@ async def on_message(message: discord.Message):
     if len(text) > 500:
         text = text[:500] + "、以下省略"
     
-    # ユーザーの話者IDを取得（未設定なら1）
-    speaker_id = bot.user_speakers.get(message.author.id, 1)
+    # ユーザーの話者IDを取得（未設定ならデフォルト）
+    speaker_id = bot.user_speakers.get(message.author.id, DEFAULT_SPEAKER_ID)
     
     # ユーザーの速度設定を取得（未設定なら1.0）
     speed = bot.user_speeds.get(message.author.id, 1.0)
@@ -521,7 +547,8 @@ async def on_message(message: discord.Message):
     await bot.voice_queues[guild_id].put({
         "text": text,
         "speaker_id": speaker_id,
-        "speed": speed
+        "speed": speed,
+        "user_id": message.author.id,
     })
     
     # 再生タスクを開始（まだ開始していない場合）
@@ -564,6 +591,19 @@ async def play_voice_queue(guild: discord.Guild):
             if not audio_data:
                 prom.errors_total.inc()
                 prom.voicevox_errors_total.inc()
+                # 話者IDが原因のエラーの可能性がある場合は broken として記録し、
+                # そのユーザーの話者設定をデフォルトにリセットする
+                failed_speaker = item["speaker_id"]
+                if failed_speaker != DEFAULT_SPEAKER_ID:
+                    if failed_speaker not in bot.broken_speaker_ids:
+                        bot.broken_speaker_ids.add(failed_speaker)
+                        print(f"⚠ 話者ID {failed_speaker} で音声合成に失敗しました。この話者IDを使用不可としてマークします。")
+                    # 該当話者を使用しているユーザーをデフォルトにリセット
+                    user_id = item.get("user_id")
+                    if user_id and bot.user_speakers.get(user_id) == failed_speaker:
+                        bot.user_speakers[user_id] = DEFAULT_SPEAKER_ID
+                        bot._save_config()
+                        print(f"⚠ ユーザー {user_id} の話者IDを {failed_speaker} からデフォルト ({DEFAULT_SPEAKER_ID}) にリセットしました。")
                 continue
             
             prom.voicevox_latency_seconds.observe(elapsed_ms / 1000)
