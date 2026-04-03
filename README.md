@@ -42,7 +42,6 @@ TalkBot2/
 ├── src/                 # ソースコード
 │   ├── bot.py          # メインBot（コマンド・イベント・辞書・音声キュー）
 │   ├── voicevox_client.py  # VOICEVOX連携
-│   ├── metrics.py      # メトリクス管理（JSON ファイルベース・30日保持）
 │   ├── prometheus_exporter.py  # Prometheus exporter（/metrics エンドポイント）
 │   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
 │   └── templates/      # ダッシュボードテンプレート
@@ -52,7 +51,7 @@ TalkBot2/
 │   ├── Dockerfile            # Bot用
 │   ├── Dockerfile.dashboard  # ダッシュボード用
 │   └── docker-compose.yml    # 3サービス構成（voicevox, bot, dashboard）
-├── config/             # 設定ファイル（config.json, metrics.json）
+├── config/             # 設定ファイル（config.json）
 ├── run.py              # 起動スクリプト
 ├── requirements.txt    # Python依存パッケージ
 └── README.md           # このファイル
@@ -76,8 +75,6 @@ graph TB
     VOICEVOX -->|音声データ| Bot
     Bot -->|音声再生| Discord
     Bot -->|設定保存| Config
-    Bot -->|メトリクス記録| Metrics
-    Dashboard -->|読み込み| Metrics
     Prometheus -->|スクレイプ /metrics| Dashboard
     Grafana -->|クエリ| Prometheus
 ```
@@ -501,11 +498,9 @@ pytest --cov=src tests/
 
 - `src/bot.py`: メインBot（コマンド、イベントハンドラ、辞書機能、音声キュー管理）
 - `src/voicevox_client.py`: VOICEVOX Engine連携クライアント
-- `src/metrics.py`: メトリクス収集・管理（レイテンシ、エラー、コマンド使用回数）
-- `src/prometheus_exporter.py`: Prometheus exporter（`/metrics` エンドポイント・全メトリクス定義）
+- `src/prometheus_exporter.py`: Prometheus exporter（`/metrics` エンドポイント・全メトリクス定義・`get_snapshot()` でダッシュボード向け JSON 提供）
 - `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード・`/metrics` ルート）
 - `config/config.json`: Bot設定（話者設定、速度設定）
-- `config/metrics.json`: メトリクスデータ（過去30日分）
 
 ## ライセンス
 

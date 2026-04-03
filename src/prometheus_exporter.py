@@ -6,7 +6,7 @@ TalkBot2 のメトリクスを Prometheus 形式で公開します。
 """
 import os
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import psutil
 from aiohttp import web
@@ -107,7 +107,7 @@ def update_dynamic_metrics() -> None:
 # aiohttp ハンドラー
 # ---------------------------------------------------------------------------
 
-def get_snapshot() -> dict:
+def get_snapshot() -> dict[str, Any]:
     """ダッシュボード用に Prometheus メトリクスの現在値をスナップショットとして返す。
 
     Returns:

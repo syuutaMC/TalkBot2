@@ -263,8 +263,6 @@ class TestGetSnapshot:
         """レイテンシ計測なしの場合 voicevox_latency_avg_ms は None であること"""
         ns = _make_exporter()
         # observe を呼ばない状態
-        import types
-        import time as _time
 
         def get_snapshot_ns():
             ns.update_dynamic_metrics()
