@@ -23,11 +23,13 @@ TalkBot2/
 │       ├── async-error-handling/  # 非同期エラーハンドリング
 │       ├── commit/                # コミットガイドライン
 │       ├── discord-bot-dev/       # Discord Bot開発
-│       └── discord-test/          # Discord Botテスト
+│       ├── discord-test/          # Discord Botテスト
+│       └── documentation/         # ドキュメント作成
 ├── src/                 # ソースコード
 │   ├── __init__.py
 │   ├── bot.py          # メインBot（コマンド・イベント・辞書・音声キュー）
 │   ├── voicevox_client.py  # VOICEVOX連携
+│   ├── dictionary_db.py    # SQLite辞書データベース管理
 │   ├── metrics.py      # メトリクス管理（レイテンシ・エラー・コマンド使用回数）
 │   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
 │   └── templates/      # ダッシュボードテンプレート
@@ -35,14 +37,18 @@ TalkBot2/
 ├── tests/              # テストコード
 │   ├── __init__.py
 │   ├── test_bot.py
-│   └── test_voicevox_client.py
+│   ├── test_dashboard.py
+│   ├── test_dictionary_db.py
+│   └── test_metrics.py
 ├── docker/             # Docker設定
 │   ├── Dockerfile            # Bot用
 │   ├── Dockerfile.dashboard  # ダッシュボード用
 │   └── docker-compose.yml    # 3サービス構成（voicevox, bot, dashboard）
-├── config/             # 設定ファイル（config.json, metrics.json）
+├── config/             # 設定ファイル（起動時に config.json / dictionary.db / metrics.json が生成される）
+│   └── config.json.example  # 設定ファイルのサンプル
 ├── run.py              # 起動スクリプト
-└── requirements.txt    # 依存パッケージ
+├── requirements.txt    # 依存パッケージ
+└── requirements-dev.txt  # 開発用依存パッケージ（pytest等）
 ```
 
 ---
@@ -392,6 +398,7 @@ TalkBot2/
 ---
 
 **更新履歴**:
+- 2026-04-03: プロジェクト構造を実態に合わせて更新（dictionary_db.py追加、テストファイル一覧修正、documentation スキル追加、requirements-dev.txt追加、config/ 説明修正）
 - 2026-03-29: documentationスキルを追加（README、API仕様書、セットアップガイド、トラブルシューティングの記述ガイド）
 - 2026-03-29: コード間の連携ルールを追加（ギルドデータ・config・イベントハンドラ・コマンド・モジュール追加時の連携箇所を明記）
 - 2026-03-29: プロジェクト構造を実態に合わせて更新（metrics, dashboard, 辞書機能等を反映）
