@@ -44,7 +44,6 @@ TalkBot2/
 │   ├── voicevox_client.py  # VOICEVOX連携
 │   ├── prometheus_exporter.py  # Prometheus exporter（/metrics エンドポイント）
 │   ├── dictionary_db.py    # SQLite辞書データベース管理
-│   ├── metrics.py      # メトリクス管理（レイテンシ・エラー・コマンド使用回数）
 │   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
 │   └── templates/      # ダッシュボードテンプレート
 │       └── index.html
@@ -52,12 +51,12 @@ TalkBot2/
 │   ├── test_bot.py
 │   ├── test_dashboard.py
 │   ├── test_dictionary_db.py
-│   └── test_metrics.py
+│   └── test_prometheus_exporter.py
 ├── docker/             # Docker設定
 │   ├── Dockerfile            # Bot用
 │   ├── Dockerfile.dashboard  # ダッシュボード用
 │   └── docker-compose.yml    # 3サービス構成（voicevox, bot, dashboard）
-├── config/             # 設定ファイル（起動時に config.json / dictionary.db / metrics.json が生成される）
+├── config/             # 設定ファイル（起動時に config.json / dictionary.db が生成される）
 │   └── config.json.example  # 設定ファイルのサンプル
 ├── run.py              # 起動スクリプト
 ├── requirements.txt    # Python依存パッケージ
@@ -74,7 +73,6 @@ graph TB
     VOICEVOX[VOICEVOX Engine]
     Config[config.json]
     DictDB[dictionary.db - SQLite]
-    Metrics[metrics.json]
     Dashboard[Dashboard Web UI :8080]
     Prometheus[Prometheus]
     Grafana[Grafana]
@@ -213,7 +211,7 @@ docker-compose up -d
 docker-compose logs -f discord-bot
 
 # ダッシュボードにアクセス
-# ブラウザで http://localhost:8080 を開く
+# ブラウザで http://localhost:50022 を開く
 
 # 停止
 docker-compose down
@@ -514,11 +512,8 @@ pytest --cov=src tests/
 - `src/prometheus_exporter.py`: Prometheus exporter（`/metrics` エンドポイント・全メトリクス定義・`get_snapshot()` でダッシュボード向け JSON 提供）
 - `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード・`/metrics` ルート）
 - `src/dictionary_db.py`: SQLite辞書データベース管理（ギルドごとの読み方登録）
-- `src/metrics.py`: メトリクス収集・管理（レイテンシ、エラー、コマンド使用回数）
-- `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード）
 - `config/config.json`: Bot設定（話者設定、読み上げチャンネル設定など）※起動時に生成
 - `config/dictionary.db`: 辞書データ（SQLite、ギルドごとの単語変換ルール）※起動時に生成
-- `config/metrics.json`: メトリクスデータ（過去30日分）※起動時に生成
 - `config/config.json.example`: 設定ファイルのサンプル
 
 ## ライセンス
