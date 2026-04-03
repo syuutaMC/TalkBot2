@@ -492,7 +492,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
       "id": 20,
       "options": {
-        "legend": { "calcs": ["mean", "max", "p95"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "title": "VOICEVOX レイテンシ（平均・95パーセンタイル）",
