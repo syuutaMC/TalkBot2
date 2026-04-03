@@ -43,6 +43,7 @@ TalkBot2/
 │   ├── bot.py          # メインBot（コマンド・イベント・辞書・音声キュー）
 │   ├── voicevox_client.py  # VOICEVOX連携
 │   ├── prometheus_exporter.py  # Prometheus exporter（/metrics エンドポイント）
+│   ├── dictionary_db.py    # SQLite辞書データベース管理
 │   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
 │   └── templates/      # ダッシュボードテンプレート
 │       └── index.html
@@ -65,6 +66,7 @@ graph TB
     Bot[TalkBot2 Bot]
     VOICEVOX[VOICEVOX Engine]
     Config[config.json]
+    DictDB[dictionary.db - SQLite]
     Metrics[metrics.json]
     Dashboard[Dashboard Web UI :8080]
     Prometheus[Prometheus]
@@ -75,6 +77,7 @@ graph TB
     VOICEVOX -->|音声データ| Bot
     Bot -->|音声再生| Discord
     Bot -->|設定保存| Config
+    Bot -->|辞書データ保存/読み込み| DictDB
     Prometheus -->|スクレイプ /metrics| Dashboard
     Grafana -->|クエリ| Prometheus
 ```
@@ -282,21 +285,21 @@ python -m src.bot
 特定の単語の読み方を登録できます:
 
 ```
-/dict add Discord でぃすこーど
-/dict add Python ぱいそん
-/dict add GitHub ぎっとはぶ
+/dictionary add Discord でぃすこーど
+/dictionary add Python ぱいそん
+/dictionary add GitHub ぎっとはぶ
 ```
 
 登録した単語を含むメッセージは、指定した読み方で読み上げられます。
 
 辞書の一覧を確認:
 ```
-/dict list
+/dictionary list
 ```
 
 単語を削除:
 ```
-/dict remove Discord
+/dictionary remove Discord
 ```
 
 ### メトリクス・ダッシュボード
@@ -500,7 +503,11 @@ pytest --cov=src tests/
 - `src/voicevox_client.py`: VOICEVOX Engine連携クライアント
 - `src/prometheus_exporter.py`: Prometheus exporter（`/metrics` エンドポイント・全メトリクス定義・`get_snapshot()` でダッシュボード向け JSON 提供）
 - `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード・`/metrics` ルート）
-- `config/config.json`: Bot設定（話者設定、速度設定）
+- `src/dictionary_db.py`: SQLite辞書データベース管理（ギルドごとの読み方登録）
+- `src/metrics.py`: メトリクス収集・管理（レイテンシ、エラー、コマンド使用回数）
+- `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード）
+- `config/config.json`: Bot設定（話者設定、読み上げチャンネル設定など）
+- `config/dictionary.db`: 辞書データ（SQLite、ギルドごとの単語変換ルール）
 
 ## ライセンス
 
