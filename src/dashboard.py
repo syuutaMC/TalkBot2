@@ -16,10 +16,12 @@ from aiohttp import web
 
 # src パッケージが sys.path に含まれていない場合（スタンドアロン起動時）に追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.dictionary_db import DictionaryDB  # noqa: E402
 from src import prometheus_exporter as _prom  # noqa: E402
 
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", "/app/config/config.json"))
+DB_PATH = CONFIG_PATH.parent / "dictionary.db"
 PORT = int(os.getenv("DASHBOARD_PORT", "8080"))
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -77,6 +79,20 @@ async def handle_api_status(request: web.Request) -> web.Response:
     """Bot の設定・利用状況を JSON で返す"""
     config = await read_config()
     guild_configs = config.get("guild_configs", {})
+
+    # SQLite から辞書データを取得して guild_configs に追加する
+    if DB_PATH.exists():
+        try:
+            dict_db = DictionaryDB(DB_PATH)
+            all_dicts = await asyncio.to_thread(dict_db.get_all_guilds)
+            for guild_id, dictionary in all_dicts.items():
+                gid_str = str(guild_id)
+                if gid_str not in guild_configs:
+                    guild_configs[gid_str] = {}
+                guild_configs[gid_str]["dictionary"] = dictionary
+        except Exception as e:
+            print(f"辞書データ読み込みエラー: {e}")
+
     total_dictionary_count = sum(len(gc.get("dictionary", {})) for gc in guild_configs.values())
     data = {
         "guild_count": len(config.get("joined_guilds", [])),
