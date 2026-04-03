@@ -33,6 +33,7 @@ audio_cache/
 
 # Config
 config/config.json
+config/dictionary.db
 
 # Runtime metrics data
 config/metrics.json

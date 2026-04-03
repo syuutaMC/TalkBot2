@@ -41,6 +41,7 @@ TalkBot2/
 ├── src/                 # ソースコード
 │   ├── bot.py          # メインBot（コマンド・イベント・辞書・音声キュー）
 │   ├── voicevox_client.py  # VOICEVOX連携
+│   ├── dictionary_db.py    # SQLite辞書データベース管理
 │   ├── metrics.py      # メトリクス管理
 │   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
 │   └── templates/      # ダッシュボードテンプレート
@@ -50,7 +51,7 @@ TalkBot2/
 │   ├── Dockerfile            # Bot用
 │   ├── Dockerfile.dashboard  # ダッシュボード用
 │   └── docker-compose.yml    # 3サービス構成（voicevox, bot, dashboard）
-├── config/             # 設定ファイル（config.json, metrics.json）
+├── config/             # 設定ファイル（config.json, dictionary.db, metrics.json）
 ├── run.py              # 起動スクリプト
 ├── requirements.txt    # Python依存パッケージ
 └── README.md           # このファイル
@@ -64,6 +65,7 @@ graph TB
     Bot[TalkBot2 Bot]
     VOICEVOX[VOICEVOX Engine]
     Config[config.json]
+    DictDB[dictionary.db - SQLite]
     Metrics[metrics.json]
     Dashboard[Dashboard Web UI :8080]
     
@@ -72,6 +74,7 @@ graph TB
     VOICEVOX -->|音声データ| Bot
     Bot -->|音声再生| Discord
     Bot -->|設定保存| Config
+    Bot -->|辞書データ保存/読み込み| DictDB
     Bot -->|メトリクス記録| Metrics
     Dashboard -->|読み込み| Metrics
 ```
@@ -279,21 +282,21 @@ python -m src.bot
 特定の単語の読み方を登録できます:
 
 ```
-/dict add Discord でぃすこーど
-/dict add Python ぱいそん
-/dict add GitHub ぎっとはぶ
+/dictionary add Discord でぃすこーど
+/dictionary add Python ぱいそん
+/dictionary add GitHub ぎっとはぶ
 ```
 
 登録した単語を含むメッセージは、指定した読み方で読み上げられます。
 
 辞書の一覧を確認:
 ```
-/dict list
+/dictionary list
 ```
 
 単語を削除:
 ```
-/dict remove Discord
+/dictionary remove Discord
 ```
 
 ### メトリクス・ダッシュボード
@@ -463,9 +466,11 @@ pytest --cov=src tests/
 
 - `src/bot.py`: メインBot（コマンド、イベントハンドラ、辞書機能、音声キュー管理）
 - `src/voicevox_client.py`: VOICEVOX Engine連携クライアント
+- `src/dictionary_db.py`: SQLite辞書データベース管理（ギルドごとの読み方登録）
 - `src/metrics.py`: メトリクス収集・管理（レイテンシ、エラー、コマンド使用回数）
 - `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード）
-- `config/config.json`: Bot設定（話者設定、辞書データ）
+- `config/config.json`: Bot設定（話者設定、読み上げチャンネル設定など）
+- `config/dictionary.db`: 辞書データ（SQLite、ギルドごとの単語変換ルール）
 - `config/metrics.json`: メトリクスデータ（過去30日分）
 
 ## ライセンス
