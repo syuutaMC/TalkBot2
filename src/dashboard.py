@@ -17,6 +17,7 @@ from aiohttp import web
 # src パッケージが sys.path に含まれていない場合（スタンドアロン起動時）に追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src import metrics as _metrics  # noqa: E402
+from src import prometheus_exporter as _prom  # noqa: E402
 
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", "/app/config/config.json"))
@@ -129,6 +130,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/voicevox/status", handle_api_voicevox_status)
     app.router.add_get("/api/voicevox/speakers", handle_api_voicevox_speakers)
     app.router.add_get("/api/metrics", handle_api_metrics)
+    app.router.add_get("/metrics", _prom.handle_metrics)
     return app
 
 
