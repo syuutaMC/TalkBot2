@@ -554,69 +554,116 @@ async def on_message(message: discord.Message):
         asyncio.create_task(play_voice_queue(message.guild))
 
 
+async def _synthesize_to_file(item: dict) -> Optional[str]:
+    """
+    音声を合成して一時ファイルに保存し、ファイルパスを返す。
+    失敗した場合は None を返す。
+
+    Args:
+        item (dict): text / speaker_id / speed を持つ辞書
+
+    Returns:
+        Optional[str]: 一時ファイルのパス、失敗時は None
+    """
+    start_time = time.monotonic()
+    prom.voicevox_requests_total.inc()
+    audio_data = await bot.voicevox.create_audio(
+        text=item["text"],
+        speaker_id=item["speaker_id"],
+        speed=item["speed"]
+    )
+    elapsed_ms = (time.monotonic() - start_time) * 1000
+
+    if not audio_data:
+        prom.errors_total.inc()
+        prom.voicevox_errors_total.inc()
+        return None
+
+    prom.voicevox_latency_seconds.observe(elapsed_ms / 1000)
+    prom.voice_play_total.inc()
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+        temp_file.write(audio_data)
+        return temp_file.name
+
+
 async def play_voice_queue(guild: discord.Guild):
-    """音声キューを再生するタスク"""
+    """音声キューを再生するタスク（先読みでレスポンスを改善）
+
+    現在の音声を再生しながら次のメッセージの音声を並行合成することで、
+    メッセージ間の無音時間を最小化する。
+    """
     guild_id = guild.id
     bot.is_playing[guild_id] = True
-    
+
+    prefetch_task: Optional[asyncio.Task] = None
+    prefetch_item: Optional[dict] = None
+
+    def _schedule_prefetch() -> None:
+        """キューに次のアイテムがあれば先読みタスクを開始する"""
+        nonlocal prefetch_task, prefetch_item
+        if prefetch_task is not None:
+            return
+        q = bot.voice_queues.get(guild_id)
+        if q and not q.empty():
+            try:
+                prefetch_item = q.get_nowait()
+                prefetch_task = asyncio.create_task(_synthesize_to_file(prefetch_item))
+            except asyncio.QueueEmpty:
+                pass
+
     try:
         while True:
             # ギルドが切断済みの場合（/leave や自動退出でキューが削除された）は終了
             if guild_id not in bot.voice_queues:
                 break
 
-            # キューが空なら終了
-            if bot.voice_queues[guild_id].empty():
-                break
-            
-            # キューからアイテムを取得
-            item = await bot.voice_queues[guild_id].get()
-            
-            # 音声データを生成（レイテンシを計測）
-            start_time = time.monotonic()
-            prom.voicevox_requests_total.inc()
-            audio_data = await bot.voicevox.create_audio(
-                text=item["text"],
-                speaker_id=item["speaker_id"],
-                speed=item["speed"]
-            )
-            elapsed_ms = (time.monotonic() - start_time) * 1000
-            
-            if not audio_data:
-                prom.errors_total.inc()
-                prom.voicevox_errors_total.inc()
-                continue
-            
-            prom.voicevox_latency_seconds.observe(elapsed_ms / 1000)
-            prom.voice_play_total.inc()
+            # 先読みデータがあればそれを使う、なければキューから取得して合成
+            if prefetch_task is not None:
+                item = prefetch_item
+                temp_path = await prefetch_task
+                prefetch_task = None
+                prefetch_item = None
+            else:
+                if bot.voice_queues[guild_id].empty():
+                    break
+                item = await bot.voice_queues[guild_id].get()
+                temp_path = await _synthesize_to_file(item)
 
-            # 一時ファイルに保存
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_file.write(audio_data)
-                temp_path = temp_file.name
-            
+            if not temp_path:
+                # 合成失敗、次のアイテムへ
+                continue
+
             try:
-                # 音声を再生
                 voice_client = guild.voice_client
                 if voice_client and voice_client.is_connected():
                     audio_source = discord.FFmpegPCMAudio(temp_path)
                     voice_client.play(audio_source)
-                    
+
+                    # 再生開始直後に次の音声を先読み開始
+                    _schedule_prefetch()
+
                     # 再生が終わるまで待機
                     while voice_client.is_playing():
                         await asyncio.sleep(0.1)
-                
+
             finally:
                 # 一時ファイルを削除
                 try:
                     os.unlink(temp_path)
                 except OSError:
                     pass
-            
-            # 次の再生まで少し待つ
-            await asyncio.sleep(0.5)
-    
+
     finally:
+        # 先読みタスクが残っていればキャンセルしてファイルをクリーンアップ
+        if prefetch_task is not None:
+            prefetch_task.cancel()
+            try:
+                leftover_path = await prefetch_task
+                if leftover_path:
+                    os.unlink(leftover_path)
+            except (asyncio.CancelledError, OSError):
+                pass
         bot.is_playing[guild_id] = False
 
 
