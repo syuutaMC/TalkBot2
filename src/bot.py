@@ -386,9 +386,18 @@ async def speakers(interaction: discord.Interaction):
             message += f"• **{speaker_name}** - {style_name} (ID: `{style_id}`)\n"
     
     metrics.record_command("speakers")
-    # メッセージが長すぎる場合は分割
+    # メッセージが長すぎる場合は行単位で分割
     if len(message) > 2000:
-        chunks = [message[i:i+2000] for i in range(0, len(message), 2000)]
+        chunks = []
+        current_chunk = ""
+        for line in message.split("\n"):
+            if len(current_chunk) + len(line) + 1 > 2000:
+                chunks.append(current_chunk)
+                current_chunk = line + "\n"
+            else:
+                current_chunk += line + "\n"
+        if current_chunk:
+            chunks.append(current_chunk)
         for chunk in chunks:
             await interaction.followup.send(chunk, ephemeral=True)
     else:
