@@ -24,7 +24,7 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 # 設定
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
-CONFIG_FILE = Path("config/config.json")
+CONFIG_FILE = Path(__file__).parent.parent / "config/config.json"
 
 # テスト用のギルドID（環境変数から取得、未設定の場合はNone）
 # 特定のギルドでのみコマンドを使いたい場合は、ここにギルドIDを設定
