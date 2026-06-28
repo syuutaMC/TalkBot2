@@ -448,7 +448,7 @@ class TestMultiGuildIsolation:
 
     @pytest.mark.asyncio
     async def test_play_voice_queue_records_tts_request_on_success(self):
-        """play_voice_queue は音声生成成功時に record_tts_request() を呼ぶこと"""
+        """play_voice_queue は音声生成成功時に voice_play_total をインクリメントすること"""
         import asyncio
         import src.bot as bot_module
 
@@ -469,14 +469,13 @@ class TestMultiGuildIsolation:
         async def fake_create_audio(text, speaker_id, speed):
             return b"fake_audio_data"
 
-        with patch("src.bot.metrics.record_tts_request") as mock_record_tts, \
-             patch("src.bot.metrics.record_latency"), \
+        with patch("src.bot.prom.voice_play_total") as mock_voice_play, \
              patch("src.bot.tempfile.NamedTemporaryFile"), \
              patch("src.bot.os.unlink"):
             bot_module.bot.voicevox.create_audio = fake_create_audio
             await play_voice_queue(mock_guild)
 
-        mock_record_tts.assert_called_once()
+        mock_voice_play.inc.assert_called_once()
 
         # クリーンアップ
         bot_module.bot.voice_queues.pop(guild_id, None)
@@ -484,7 +483,7 @@ class TestMultiGuildIsolation:
 
     @pytest.mark.asyncio
     async def test_play_voice_queue_does_not_record_tts_request_on_failure(self):
-        """play_voice_queue は音声生成失敗（None 返却）時に record_tts_request() を呼ばないこと"""
+        """play_voice_queue は音声生成失敗（None 返却）時に voice_play_total をインクリメントしないこと"""
         import asyncio
         import src.bot as bot_module
 
@@ -505,13 +504,11 @@ class TestMultiGuildIsolation:
         async def fake_create_audio_fail(text, speaker_id, speed):
             return None  # 失敗をシミュレート
 
-        with patch("src.bot.metrics.record_tts_request") as mock_record_tts, \
-             patch("src.bot.metrics.record_error"), \
-             patch("src.bot.metrics.record_latency"):
+        with patch("src.bot.prom.voice_play_total") as mock_voice_play:
             bot_module.bot.voicevox.create_audio = fake_create_audio_fail
             await play_voice_queue(mock_guild)
 
-        mock_record_tts.assert_not_called()
+        mock_voice_play.inc.assert_not_called()
 
         # クリーンアップ
         bot_module.bot.voice_queues.pop(guild_id, None)
@@ -991,6 +988,7 @@ class TestPerGuildDictionary:
         import src.bot as bot_module
         for gid in guild_ids:
             bot_module.bot.guild_configs.pop(gid, None)
+            bot_module.bot.dict_db.clear_guild(gid)
 
     @pytest.mark.asyncio
     async def test_dictionary_add_stores_entry_in_guild_config(self):
@@ -1135,19 +1133,55 @@ class TestPerGuildDictionary:
         bot_module.bot.guild_configs.pop(guild_id, None)
 
     def test_save_and_load_config_persists_per_guild_dictionary(self, tmp_path):
-        """_save_config と _load_config で辞書がギルドごとに保存・復元されること"""
+        """_save_config と VoiceBot 再生成で辞書がギルドごとにSQLiteに保存・復元されること"""
         config_file = tmp_path / "config.json"
+        db_file = tmp_path / "dictionary.db"
 
-        with patch("src.bot.CONFIG_FILE", config_file):
+        with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
             bot = VoiceBot()
             bot.guild_configs = {
-                111: {"read_channel": 1, "dictionary": {"hello": "こんにちは"}},
-                222: {"read_channel": 2, "dictionary": {"bye": "さようなら"}},
+                111: {"read_channel": 1},
+                222: {"read_channel": 2},
             }
+            bot.dict_db.add(111, "hello", "こんにちは")
+            bot.dict_db.add(222, "bye", "さようなら")
             bot._save_config()
 
-        with patch("src.bot.CONFIG_FILE", config_file):
+        with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
             bot2 = VoiceBot()
 
         assert bot2.guild_configs[111]["dictionary"] == {"hello": "こんにちは"}
         assert bot2.guild_configs[222]["dictionary"] == {"bye": "さようなら"}
+
+    def test_json_dictionary_data_is_migrated_to_sqlite_on_startup(self, tmp_path):
+        """起動時にJSONに残っている辞書データがSQLiteに自動移行されること"""
+        config_file = tmp_path / "config.json"
+        db_file = tmp_path / "dictionary.db"
+
+        # 旧形式のJSONを用意（辞書がJSONに含まれている）
+        legacy_config = {
+            "user_speakers": {},
+            "user_speeds": {},
+            "guild_configs": {
+                "111": {"read_channel": 1, "dictionary": {"hello": "こんにちは"}},
+                "222": {"read_channel": 2, "dictionary": {"bye": "さようなら"}},
+            },
+            "joined_guilds": [],
+        }
+        config_file.write_text(json.dumps(legacy_config), encoding="utf-8")
+
+        with patch("src.bot.CONFIG_FILE", config_file), patch("src.bot.DB_FILE", db_file):
+            bot = VoiceBot()
+
+        # メモリ上で辞書が読み込まれていること
+        assert bot.guild_configs[111]["dictionary"] == {"hello": "こんにちは"}
+        assert bot.guild_configs[222]["dictionary"] == {"bye": "さようなら"}
+
+        # 辞書がSQLiteに移行されていること
+        assert bot.dict_db.get_all(111) == {"hello": "こんにちは"}
+        assert bot.dict_db.get_all(222) == {"bye": "さようなら"}
+
+        # JSONから辞書が除去されていること（移行後のconfig.jsonを確認）
+        saved = json.loads(config_file.read_text(encoding="utf-8"))
+        assert "dictionary" not in saved["guild_configs"]["111"]
+        assert "dictionary" not in saved["guild_configs"]["222"]

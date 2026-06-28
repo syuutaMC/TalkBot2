@@ -16,7 +16,8 @@ import tempfile
 import time
 
 from src.voicevox_client import VoicevoxClient
-from src import metrics
+from src import prometheus_exporter as prom
+from src.dictionary_db import DictionaryDB
 
 # 環境変数の読み込み
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
@@ -25,6 +26,7 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
 CONFIG_FILE = Path(__file__).parent.parent / "config/config.json"
+DB_FILE = Path(__file__).parent.parent / "config/dictionary.db"
 
 # テスト用のギルドID（環境変数から取得、未設定の場合はNone）
 # 特定のギルドでのみコマンドを使いたい場合は、ここにギルドIDを設定
@@ -98,6 +100,9 @@ class VoiceBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
         self.voicevox = VoicevoxClient(VOICEVOX_URL)
         
+        # SQLite辞書データベースを初期化
+        self.dict_db = DictionaryDB(DB_FILE)
+        
         # 設定ファイルから読み込み
         self._load_config()
         
@@ -117,14 +122,32 @@ class VoiceBot(commands.Bot):
                     self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
                     self.joined_guilds: Set[int] = set(config.get("joined_guilds", []))
-                    total_dict = sum(len(gc.get("dictionary", {})) for gc in self.guild_configs.values())
-                    print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {total_dict}件）")
             else:
                 self.user_speakers = {}
                 self.user_speeds = {}
                 self.guild_configs = {}
                 self.joined_guilds: Set[int] = set()
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
+
+            # JSONに辞書データが残っている場合はSQLiteに移行する
+            needs_save = False
+            for guild_id, gc in list(self.guild_configs.items()):
+                if "dictionary" in gc and gc["dictionary"]:
+                    self.dict_db.migrate_from_dict(guild_id, gc["dictionary"])
+                    del gc["dictionary"]
+                    needs_save = True
+            if needs_save:
+                self._save_config()
+                print("✓ 辞書データをJSONからSQLiteに移行しました")
+
+            # SQLiteから辞書データをメモリに読み込む（既知のギルドのみ）
+            for guild_id in list(self.guild_configs.keys()):
+                guild_dict = self.dict_db.get_all(guild_id)
+                if guild_dict:
+                    self.guild_configs[guild_id]["dictionary"] = guild_dict
+
+            total_dict = sum(len(gc.get("dictionary", {})) for gc in self.guild_configs.values())
+            print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {total_dict}件）")
         except Exception as e:
             print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
             self.user_speakers = {}
@@ -133,13 +156,18 @@ class VoiceBot(commands.Bot):
             self.joined_guilds: Set[int] = set()
     
     def _save_config(self):
-        """設定ファイルに保存する"""
+        """設定ファイルに保存する（辞書データはSQLiteで管理するためJSONには含めない）"""
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            # 辞書データはSQLiteで管理するため、JSONには含めない
+            guild_configs_to_save = {
+                str(k): {ck: cv for ck, cv in v.items() if ck != "dictionary"}
+                for k, v in self.guild_configs.items()
+            }
             config = {
                 "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
                 "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
-                "guild_configs": {str(k): v for k, v in self.guild_configs.items()},
+                "guild_configs": guild_configs_to_save,
                 "joined_guilds": list(self.joined_guilds),
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -208,6 +236,7 @@ async def on_guild_remove(guild: discord.Guild):
     bot.guild_configs.pop(guild_id, None)
     bot.voice_queues.pop(guild_id, None)
     bot.is_playing.pop(guild_id, None)
+    bot.dict_db.clear_guild(guild_id)
     bot._save_config()
 
 
@@ -244,7 +273,7 @@ async def join(interaction: discord.Interaction):
         bot.is_playing[guild_id] = False
         bot._save_config()
         
-        metrics.record_command("join")
+        prom.commands_total.labels(command="join").inc()
         await interaction.followup.send(f"✓ {channel.name} に参加しました！このチャンネルのメッセージを読み上げます。")
         
     except Exception as e:
@@ -273,7 +302,7 @@ async def leave(interaction: discord.Interaction):
             del bot.is_playing[guild_id]
         bot._save_config()
         
-        metrics.record_command("leave")
+        prom.commands_total.labels(command="leave").inc()
         await interaction.followup.send("✓ ボイスチャンネルから退出しました")
         
     except Exception as e:
@@ -329,7 +358,7 @@ async def help_command(interaction: discord.Interaction):
     else:
         help_text += "⚠ 話者一覧を取得できませんでした。VOICEVOX Engineが起動しているか確認してください。"
     
-    metrics.record_command("help")
+    prom.commands_total.labels(command="help").inc()
     # メッセージが長すぎる場合は分割
     if len(help_text) > 2000:
         chunks = []
@@ -360,7 +389,7 @@ async def voice(interaction: discord.Interaction, speaker_id: int):
     
     bot.user_speakers[interaction.user.id] = speaker_id
     bot._save_config()  # 設定を保存
-    metrics.record_command("voice")
+    prom.commands_total.labels(command="voice").inc()
     await interaction.response.send_message(f"✓ あなたの読み上げ音声を話者ID {speaker_id} に設定しました", ephemeral=True)
 
 
@@ -385,7 +414,7 @@ async def speakers(interaction: discord.Interaction):
             style_id = style.get("id", 0)
             message += f"• **{speaker_name}** - {style_name} (ID: `{style_id}`)\n"
     
-    metrics.record_command("speakers")
+    prom.commands_total.labels(command="speakers").inc()
     # メッセージが長すぎる場合は行単位で分割
     if len(message) > 2000:
         chunks = []
@@ -415,7 +444,7 @@ async def speed(interaction: discord.Interaction, speed: float):
     
     bot.user_speeds[interaction.user.id] = speed
     bot._save_config()  # 設定を保存
-    metrics.record_command("speed")
+    prom.commands_total.labels(command="speed").inc()
     await interaction.response.send_message(f"✓ あなたの読み上げ速度を {speed} に設定しました", ephemeral=True)
 
 
@@ -467,6 +496,8 @@ async def on_message(message: discord.Message):
     if not message.guild:
         return
     
+    prom.messages_total.inc()
+
     guild_id = message.guild.id
     
     # ボイスチャンネルに接続していない場合は無視
@@ -543,6 +574,7 @@ async def play_voice_queue(guild: discord.Guild):
             
             # 音声データを生成（レイテンシを計測）
             start_time = time.monotonic()
+            prom.voicevox_requests_total.inc()
             audio_data = await bot.voicevox.create_audio(
                 text=item["text"],
                 speaker_id=item["speaker_id"],
@@ -551,11 +583,12 @@ async def play_voice_queue(guild: discord.Guild):
             elapsed_ms = (time.monotonic() - start_time) * 1000
             
             if not audio_data:
-                metrics.record_error()
+                prom.errors_total.inc()
+                prom.voicevox_errors_total.inc()
                 continue
             
-            metrics.record_latency(elapsed_ms)
-            metrics.record_tts_request()
+            prom.voicevox_latency_seconds.observe(elapsed_ms / 1000)
+            prom.voice_play_total.inc()
 
             # 一時ファイルに保存
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
@@ -615,8 +648,8 @@ async def dictionary_add(interaction: discord.Interaction, before: str, after: s
         )
         return
     _ensure_guild_dictionary(guild_id)[before] = after
-    bot._save_config()
-    metrics.record_command("dictionary_add")
+    prom.commands_total.labels(command="dictionary_add").inc()
+    bot.dict_db.add(guild_id, before, after)
     await interaction.response.send_message(f"✓ 辞書に登録しました: `{before}` → `{after}`", ephemeral=True)
 
 
@@ -631,8 +664,8 @@ async def dictionary_remove(interaction: discord.Interaction, before: str):
     guild_dict = _ensure_guild_dictionary(guild_id)
     if before in guild_dict:
         del guild_dict[before]
-        bot._save_config()
-        metrics.record_command("dictionary_remove")
+        prom.commands_total.labels(command="dictionary_remove").inc()
+        bot.dict_db.remove(guild_id, before)
         await interaction.response.send_message(f"✓ 辞書から削除しました: `{before}`", ephemeral=True)
     else:
         await interaction.response.send_message(f"⚠ `{before}` は辞書に登録されていません", ephemeral=True)
@@ -648,7 +681,7 @@ async def dictionary_list(interaction: discord.Interaction):
     guild_dict = _ensure_guild_dictionary(guild_id)
     entries = list(guild_dict.items())
     view = DictionaryListView(entries)
-    metrics.record_command("dictionary_list")
+    prom.commands_total.labels(command="dictionary_list").inc()
     await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
     view.message = await interaction.original_response()
 

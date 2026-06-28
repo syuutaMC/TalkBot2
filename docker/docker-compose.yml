@@ -35,12 +35,16 @@ services:
     environment:
       - VOICEVOX_URL=http://voicevox:50021
       - TZ=Asia/Tokyo
+      # Prometheus マルチプロセスモード: メトリクスをファイル経由で共有する
+      - PROMETHEUS_MULTIPROC_DIR=/app/prometheus_data
     env_file:
       - ../.env
     restart: unless-stopped
     volumes:
       # 設定ファイルの永続化
       - ../config:/app/config
+      # Prometheus メトリクス共有ディレクトリ（ダッシュボードと共有）
+      - prometheus_data:/app/prometheus_data
 
   # 監視ダッシュボード (http://localhost:8080)
   dashboard:
@@ -56,7 +60,15 @@ services:
       - VOICEVOX_URL=http://voicevox:50021
       - DASHBOARD_PORT=8080
       - TZ=Asia/Tokyo
+      # Prometheus マルチプロセスモード: Bot のメトリクスファイルを読み取る
+      - PROMETHEUS_MULTIPROC_DIR=/app/prometheus_data
     restart: unless-stopped
     volumes:
       # Bot の設定ファイルを読み取り専用で共有
       - ../config:/app/config:ro
+      # Prometheus メトリクス共有ディレクトリ（Bot と共有）
+      - prometheus_data:/app/prometheus_data
+
+volumes:
+  # Bot と dashboard が Prometheus メトリクスファイルを共有するための名前付きボリューム
+  prometheus_data:

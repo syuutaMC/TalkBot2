@@ -3,8 +3,7 @@
     "user_speeds": {},
     "guild_configs": {
         "123456789012345678": {
-            "read_channel": 0,
-            "dictionary": {}
+            "read_channel": 0
         }
     },
     "joined_guilds": []

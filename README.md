@@ -16,6 +16,7 @@ TalkBot2は、DiscordサーバーでVOICEVOX Engineを使用した高品質な�
 - ✅ 複数の話者（キャラクター）から選択可能
 - ✅ **辞書機能** - 特定の単語の読み方をカスタマイズ
 - ✅ **メトリクス・ダッシュボード** - パフォーマンスとエラーの可視化
+- ✅ **Prometheus exporter** - `/metrics` エンドポイントで Grafana 等と連携可能
 
 ## スラッシュコマンド一覧
 
@@ -41,18 +42,25 @@ TalkBot2/
 ├── src/                 # ソースコード
 │   ├── bot.py          # メインBot（コマンド・イベント・辞書・音声キュー）
 │   ├── voicevox_client.py  # VOICEVOX連携
-│   ├── metrics.py      # メトリクス管理
+│   ├── prometheus_exporter.py  # Prometheus exporter（/metrics エンドポイント）
+│   ├── dictionary_db.py    # SQLite辞書データベース管理
 │   ├── dashboard.py    # 監視ダッシュボード（aiohttp Webサーバー）
 │   └── templates/      # ダッシュボードテンプレート
 │       └── index.html
 ├── tests/              # テストコード
+│   ├── test_bot.py
+│   ├── test_dashboard.py
+│   ├── test_dictionary_db.py
+│   └── test_prometheus_exporter.py
 ├── docker/             # Docker設定
 │   ├── Dockerfile            # Bot用
 │   ├── Dockerfile.dashboard  # ダッシュボード用
 │   └── docker-compose.yml    # 3サービス構成（voicevox, bot, dashboard）
-├── config/             # 設定ファイル（config.json, metrics.json）
+├── config/             # 設定ファイル（起動時に config.json / dictionary.db が生成される）
+│   └── config.json.example  # 設定ファイルのサンプル
 ├── run.py              # 起動スクリプト
 ├── requirements.txt    # Python依存パッケージ
+├── requirements-dev.txt # 開発用依存パッケージ（pytest等）
 └── README.md           # このファイル
 ```
 
@@ -64,17 +72,27 @@ graph TB
     Bot[TalkBot2 Bot]
     VOICEVOX[VOICEVOX Engine]
     Config[config.json]
-    Metrics[metrics.json]
+    DictDB[dictionary.db - SQLite]
+    PromData[prometheus_data - 共有ボリューム]
     Dashboard[Dashboard Web UI :8080]
+    Prometheus[Prometheus]
+    Grafana[Grafana]
     
     Discord -->|メッセージ| Bot
     Bot -->|音声合成リクエスト| VOICEVOX
     VOICEVOX -->|音声データ| Bot
     Bot -->|音声再生| Discord
     Bot -->|設定保存| Config
-    Bot -->|メトリクス記録| Metrics
-    Dashboard -->|読み込み| Metrics
+    Bot -->|辞書データ保存/読み込み| DictDB
+    Bot -->|メトリクスファイル書き込み| PromData
+    Dashboard -->|メトリクスファイル読み取り| PromData
+    Prometheus -->|スクレイプ /metrics| Dashboard
+    Grafana -->|クエリ| Prometheus
 ```
+
+> **Note**: BotとDashboardは別コンテナ（別プロセス）で動作します。Prometheusメトリクスは
+> `prometheus_data` Docker ボリュームを介してファイルベースで共有されます
+> （[prometheus_client マルチプロセスモード](https://prometheus.github.io/client_python/multiprocess/)）。
 
 ## セットアップ
 
@@ -177,6 +195,7 @@ cp .env.example .env
 | `DISCORD_TOKEN` | Discord BotのトークンをDiscord Developer Portalから取得 | ✅ | - | `MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.GhIjKl...` |
 | `VOICEVOX_URL` | VOICEVOX EngineのエンドポイントURL | ❌ | `http://127.0.0.1:50021` | `http://localhost:50021` |
 | `DISCORD_GUILD_ID` | テスト用のギルドID（設定するとそのギルドにのみコマンドを即座に同期） | ❌ | - | `123456789012345678` |
+| `PROMETHEUS_MULTIPROC_DIR` | Prometheusマルチプロセスモード用の共有ディレクトリパス。Dockerではボリューム経由で自動設定されるため通常は不要 | ❌ | - | `/tmp/prometheus_data` |
 
 ## 起動方法
 
@@ -200,7 +219,7 @@ docker-compose up -d
 docker-compose logs -f discord-bot
 
 # ダッシュボードにアクセス
-# ブラウザで http://localhost:8080 を開く
+# ブラウザで http://localhost:50022 を開く
 
 # 停止
 docker-compose down
@@ -279,21 +298,21 @@ python -m src.bot
 特定の単語の読み方を登録できます:
 
 ```
-/dict add Discord でぃすこーど
-/dict add Python ぱいそん
-/dict add GitHub ぎっとはぶ
+/dictionary add Discord でぃすこーど
+/dictionary add Python ぱいそん
+/dictionary add GitHub ぎっとはぶ
 ```
 
 登録した単語を含むメッセージは、指定した読み方で読み上げられます。
 
 辞書の一覧を確認:
 ```
-/dict list
+/dictionary list
 ```
 
 単語を削除:
 ```
-/dict remove Discord
+/dictionary remove Discord
 ```
 
 ### メトリクス・ダッシュボード
@@ -305,6 +324,45 @@ Bot起動時に、パフォーマンスとエラーを可視化するダッシ�
 - エラー発生回数
 - コマンド使用回数
 - 過去30日間の統計データ
+
+### Prometheus exporter
+
+ダッシュボードの `/metrics` エンドポイントで、Prometheus 形式のメトリクスを公開しています。
+Prometheus + Grafana などの外部監視ツールと連携してアラートや長期的な可視化が可能です。
+
+```
+http://localhost:8080/metrics
+```
+
+> **仕組み**: BotコンテナとDashboardコンテナは別プロセスで動作しています。
+> Botが計測したメトリクス（`messages_total` など）は `prometheus_data` 共有ボリューム内のファイルに書き込まれ、
+> Dashboardが [prometheus_client マルチプロセスモード](https://prometheus.github.io/client_python/multiprocess/) で
+> そのファイルを読み取ることで正確な値を返します。
+
+公開されるメトリクス一覧:
+
+| メトリクス名 | 種類 | 説明 |
+|---|---|---|
+| `talkbot_messages_total` | Counter | 受信メッセージ数 |
+| `talkbot_commands_total{command}` | Counter | スラッシュコマンド実行数（コマンド名ラベル付き） |
+| `talkbot_voice_play_total` | Counter | 音声再生回数 |
+| `talkbot_errors_total` | Counter | Bot 内部エラー数 |
+| `talkbot_voicevox_requests_total` | Counter | VOICEVOX API 呼び出し回数 |
+| `talkbot_voicevox_latency_seconds` | Histogram | VOICEVOX 音声生成レイテンシ（秒） |
+| `talkbot_voicevox_errors_total` | Counter | VOICEVOX API エラー数 |
+| `talkbot_uptime_seconds` | Gauge | Bot プロセスの稼働時間（秒） |
+| `talkbot_memory_usage_bytes` | Gauge | Bot プロセスのメモリ使用量（バイト） |
+
+Prometheus の設定例 (`prometheus.yml`):
+
+```yaml
+scrape_configs:
+  - job_name: talkbot2
+    static_configs:
+      - targets: ['localhost:50022']
+```
+
+> Docker使用時のダッシュボードは `localhost:50022` で公開されます（内部ポート8080をホストの50022にマッピング）。
 
 ## Docker関連のコマンド
 
@@ -330,6 +388,9 @@ docker-compose restart
 # コンテナの停止
 docker-compose down
 
+# コンテナとボリュームを完全に削除（メトリクスデータもリセット）
+docker-compose down -v
+
 # イメージの再ビルド
 docker-compose build --no-cache
 
@@ -339,6 +400,10 @@ docker-compose ps
 # プロジェクトルートに戻る
 cd ..
 ```
+
+> **Dockerボリュームについて**: `prometheus_data` という名前付きボリュームが自動作成され、
+> BotとDashboard間でPrometheusメトリクスファイルが共有されます。
+> `docker-compose down` だけではボリュームは削除されません。完全リセットには `-v` オプションを使用してください。
 
 ## トラブルシューティング
 
@@ -449,11 +514,14 @@ sudo apt install ffmpeg
 ### テストの実行
 
 ```bash
-# 全テストを実行
-pytest
+# 開発用依存パッケージをインストール
+pip install -r requirements.txt -r requirements-dev.txt
 
-# 特定のファイルをテスト
-pytest tests/test_bot.py
+# 全テストを実行
+python -m pytest tests/
+
+# 詳細表示
+python -m pytest -v
 
 # カバレッジを確認
 pytest --cov=src tests/
@@ -463,10 +531,12 @@ pytest --cov=src tests/
 
 - `src/bot.py`: メインBot（コマンド、イベントハンドラ、辞書機能、音声キュー管理）
 - `src/voicevox_client.py`: VOICEVOX Engine連携クライアント
-- `src/metrics.py`: メトリクス収集・管理（レイテンシ、エラー、コマンド使用回数）
-- `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード）
-- `config/config.json`: Bot設定（話者設定、辞書データ）
-- `config/metrics.json`: メトリクスデータ（過去30日分）
+- `src/prometheus_exporter.py`: Prometheus exporter（`/metrics` エンドポイント・全メトリクス定義・`get_snapshot()` でダッシュボード向け JSON 提供）
+- `src/dashboard.py`: aiohttp Webサーバー（メトリクス可視化ダッシュボード・`/metrics` ルート）
+- `src/dictionary_db.py`: SQLite辞書データベース管理（ギルドごとの読み方登録）
+- `config/config.json`: Bot設定（話者設定、読み上げチャンネル設定など）※起動時に生成
+- `config/dictionary.db`: 辞書データ（SQLite、ギルドごとの単語変換ルール）※起動時に生成
+- `config/config.json.example`: 設定ファイルのサンプル
 
 ## ライセンス
 
