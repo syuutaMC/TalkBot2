@@ -48,6 +48,7 @@ class DictionaryListView(discord.ui.View):
         self.entries = entries
         self.page = 0
         self.total_pages = max(1, (len(entries) + self.PER_PAGE - 1) // self.PER_PAGE)
+        self.message: Optional[discord.Message] = None
         self._update_buttons()
 
     def _update_buttons(self):
@@ -78,6 +79,16 @@ class DictionaryListView(discord.ui.View):
         self.page += 1
         self._update_buttons()
         await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def on_timeout(self):
+        """タイムアウト時にボタンを無効化してUIに反映する"""
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                pass
 
 
 class VoiceBot(commands.Bot):
@@ -623,6 +634,7 @@ async def dictionary_list(interaction: discord.Interaction):
     view = DictionaryListView(entries)
     metrics.record_command("dictionary_list")
     await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
+    view.message = await interaction.original_response()
 
 
 bot.tree.add_command(dictionary_group)
