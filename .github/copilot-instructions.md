@@ -256,6 +256,27 @@ TalkBot2/
    - すべてのテストが通ることを確認
    - コードレビューを依頼
 
+4. **ブランチ保護ルール（重要）**:
+   - `master` への直接 `git push` は **リポジトリルールで拒否される**
+   - コード変更は必ず feature/fix ブランチを作成して PR 経由でマージすること
+   ```powershell
+   # NG: 直接 push
+   git push origin master
+
+   # OK: ブランチを切って push → GitHub で PR 作成
+   git checkout -b fix/your-branch-name
+   git push origin fix/your-branch-name
+   # → https://github.com/syuutaMC/TalkBot2/pull/new/fix/your-branch-name から PR 作成
+   ```
+
+5. **Docker コンテナへのコード反映**:
+   - `discord-bot` サービスはソースから `build` しているため、コード変更後は **必ず再ビルドが必要**
+   - `docker compose up -d` だけでは古いイメージのまま起動するため変更が反映されない
+   ```powershell
+   # コード変更をコンテナに反映する
+   docker compose up --build -d discord-bot
+   ```
+
 ---
 
 ## Copilot動作設定
@@ -398,6 +419,7 @@ TalkBot2/
 ---
 
 **更新履歴**:
+- 2026-06-28: Git運用にブランチ保護ルール（master 直接 push 不可・PR 必須）と Docker 再ビルド手順を追記
 - 2026-04-03: プロジェクト構造を実態に合わせて更新（dictionary_db.py追加、テストファイル一覧修正、documentation スキル追加、requirements-dev.txt追加、config/ 説明修正）
 - 2026-03-29: documentationスキルを追加（README、API仕様書、セットアップガイド、トラブルシューティングの記述ガイド）
 - 2026-03-29: コード間の連携ルールを追加（ギルドデータ・config・イベントハンドラ・コマンド・モジュール追加時の連携箇所を明記）
