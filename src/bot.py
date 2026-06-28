@@ -25,8 +25,8 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 # 設定
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://127.0.0.1:50021")
-CONFIG_FILE = Path("config/config.json")
-DB_FILE = Path("config/dictionary.db")
+CONFIG_FILE = Path(__file__).parent.parent / "config/config.json"
+DB_FILE = Path(__file__).parent.parent / "config/dictionary.db"
 
 # テスト用のギルドID（環境変数から取得、未設定の場合はNone）
 # 特定のギルドでのみコマンドを使いたい場合は、ここにギルドIDを設定
@@ -50,6 +50,7 @@ class DictionaryListView(discord.ui.View):
         self.entries = entries
         self.page = 0
         self.total_pages = max(1, (len(entries) + self.PER_PAGE - 1) // self.PER_PAGE)
+        self.message: Optional[discord.Message] = None
         self._update_buttons()
 
     def _update_buttons(self):
@@ -80,6 +81,16 @@ class DictionaryListView(discord.ui.View):
         self.page += 1
         self._update_buttons()
         await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def on_timeout(self):
+        """タイムアウト時にボタンを無効化してUIに反映する"""
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                pass
 
 
 class VoiceBot(commands.Bot):
@@ -404,9 +415,18 @@ async def speakers(interaction: discord.Interaction):
             message += f"• **{speaker_name}** - {style_name} (ID: `{style_id}`)\n"
     
     prom.commands_total.labels(command="speakers").inc()
-    # メッセージが長すぎる場合は分割
+    # メッセージが長すぎる場合は行単位で分割
     if len(message) > 2000:
-        chunks = [message[i:i+2000] for i in range(0, len(message), 2000)]
+        chunks = []
+        current_chunk = ""
+        for line in message.split("\n"):
+            if len(current_chunk) + len(line) + 1 > 2000:
+                chunks.append(current_chunk)
+                current_chunk = line + "\n"
+            else:
+                current_chunk += line + "\n"
+        if current_chunk:
+            chunks.append(current_chunk)
         for chunk in chunks:
             await interaction.followup.send(chunk, ephemeral=True)
     else:
@@ -493,9 +513,10 @@ async def on_message(message: discord.Message):
     # メッセージを読み上げキューに追加
     text = message.clean_content
     
-    # URLや特殊文字の処理
-    if not text or text.startswith(("http://", "https://")):
-        text = "URL省略"
+    # URLや特殊文字の処理（文中のURLを正規表現で置換）
+    text = re.sub(r'https?://\S+', "URL省略", text)
+    if not text.strip():
+        return
     
     # 辞書による変換（最長一致・単一パスで多重置換を防ぐ）
     guild_dict = bot.guild_configs.get(guild_id, {}).get("dictionary", {})
@@ -530,7 +551,7 @@ async def on_message(message: discord.Message):
     # 同一ギルドに対して複数タスクが起動されるのを防ぐ
     if not bot.is_playing.get(guild_id, False):
         bot.is_playing[guild_id] = True
-        bot.loop.create_task(play_voice_queue(message.guild))
+        asyncio.create_task(play_voice_queue(message.guild))
 
 
 async def play_voice_queue(guild: discord.Guild):
@@ -589,7 +610,7 @@ async def play_voice_queue(guild: discord.Guild):
                 # 一時ファイルを削除
                 try:
                     os.unlink(temp_path)
-                except:
+                except OSError:
                     pass
             
             # 次の再生まで少し待つ
@@ -620,6 +641,12 @@ async def dictionary_add(interaction: discord.Interaction, before: str, after: s
         await interaction.response.send_message("⚠ このコマンドはサーバー内でのみ使用できます", ephemeral=True)
         return
     guild_id = interaction.guild.id
+    if len(before) > 50 or len(after) > 100:
+        await interaction.response.send_message(
+            "⚠ テキストが長すぎます（変換前: 50文字以内、変換後: 100文字以内）",
+            ephemeral=True
+        )
+        return
     _ensure_guild_dictionary(guild_id)[before] = after
     prom.commands_total.labels(command="dictionary_add").inc()
     bot.dict_db.add(guild_id, before, after)
@@ -656,6 +683,7 @@ async def dictionary_list(interaction: discord.Interaction):
     view = DictionaryListView(entries)
     prom.commands_total.labels(command="dictionary_list").inc()
     await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
+    view.message = await interaction.original_response()
 
 
 bot.tree.add_command(dictionary_group)

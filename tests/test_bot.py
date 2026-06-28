@@ -350,12 +350,11 @@ class TestMultiGuildIsolation:
             return MagicMock()
 
         with patch.object(bot_module.bot, 'process_commands', new_callable=AsyncMock), \
-             patch.object(bot_module.bot, 'loop') as mock_loop:
-            mock_loop.create_task.side_effect = fake_create_task
+             patch('asyncio.create_task', side_effect=fake_create_task) as mock_create_task:
             await bot_module.on_message(mock_message)
 
         # create_task が呼ばれていること
-        assert mock_loop.create_task.call_count == 1
+        assert mock_create_task.call_count == 1
 
         # create_task が呼ばれた時点で is_playing が True になっていること
         assert captured_is_playing == [True], (
@@ -394,11 +393,11 @@ class TestMultiGuildIsolation:
         mock_message.author.id = 43
 
         with patch.object(bot_module.bot, 'process_commands', new_callable=AsyncMock), \
-             patch.object(bot_module.bot, 'loop') as mock_loop:
+             patch('asyncio.create_task') as mock_create_task:
             await bot_module.on_message(mock_message)
 
         # 既に再生中なので create_task は呼ばれないこと
-        mock_loop.create_task.assert_not_called()
+        mock_create_task.assert_not_called()
 
         # テスト後のクリーンアップ
         bot_module.bot.voice_queues.pop(guild_id, None)
