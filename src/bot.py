@@ -499,7 +499,7 @@ async def on_message(message: discord.Message):
     # 同一ギルドに対して複数タスクが起動されるのを防ぐ
     if not bot.is_playing.get(guild_id, False):
         bot.is_playing[guild_id] = True
-        bot.loop.create_task(play_voice_queue(message.guild))
+        asyncio.create_task(play_voice_queue(message.guild))
 
 
 async def play_voice_queue(guild: discord.Guild):
