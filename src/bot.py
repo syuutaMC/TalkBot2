@@ -556,7 +556,7 @@ async def play_voice_queue(guild: discord.Guild):
                 # 一時ファイルを削除
                 try:
                     os.unlink(temp_path)
-                except:
+                except OSError:
                     pass
             
             # 次の再生まで少し待つ
