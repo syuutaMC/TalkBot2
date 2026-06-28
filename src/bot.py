@@ -599,6 +599,12 @@ async def dictionary_add(interaction: discord.Interaction, before: str, after: s
         await interaction.response.send_message("⚠ このコマンドはサーバー内でのみ使用できます", ephemeral=True)
         return
     guild_id = interaction.guild.id
+    if len(before) > 50 or len(after) > 100:
+        await interaction.response.send_message(
+            "⚠ テキストが長すぎます（変換前: 50文字以内、変換後: 100文字以内）",
+            ephemeral=True
+        )
+        return
     _ensure_guild_dictionary(guild_id)[before] = after
     bot._save_config()
     metrics.record_command("dictionary_add")
