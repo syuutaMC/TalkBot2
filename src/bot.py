@@ -473,9 +473,10 @@ async def on_message(message: discord.Message):
     # メッセージを読み上げキューに追加
     text = message.clean_content
     
-    # URLや特殊文字の処理
-    if not text or text.startswith(("http://", "https://")):
-        text = "URL省略"
+    # URLや特殊文字の処理（文中のURLを正規表現で置換）
+    text = re.sub(r'https?://\S+', "URL省略", text)
+    if not text.strip():
+        return
     
     # 辞書による変換（最長一致・単一パスで多重置換を防ぐ）
     guild_dict = bot.guild_configs.get(guild_id, {}).get("dictionary", {})
