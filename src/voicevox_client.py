@@ -16,7 +16,8 @@ class VoicevoxClient:
     async def initialize(self):
         """セッションの初期化"""
         if not self.session:
-            self.session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(connect=5, total=30)
+            self.session = aiohttp.ClientSession(timeout=timeout)
     
     async def close(self):
         """セッションのクローズ"""
