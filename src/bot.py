@@ -19,6 +19,8 @@ from src.voicevox_client import VoicevoxClient
 from src import prometheus_exporter as prom
 from src.dictionary_db import DictionaryDB
 
+KEYCAP_NUMBER_EMOJI_PATTERN = re.compile(r"[0-9#*]\ufe0f?\u20e3")
+
 # 環境変数の読み込み
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
@@ -515,6 +517,7 @@ async def on_message(message: discord.Message):
     
     # URLや特殊文字の処理（文中のURLを正規表現で置換）
     text = re.sub(r'https?://\S+', "URL省略", text)
+    text = KEYCAP_NUMBER_EMOJI_PATTERN.sub("", text)
     if not text.strip():
         return
     

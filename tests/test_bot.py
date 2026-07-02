@@ -1274,6 +1274,43 @@ class TestPerGuildDictionary:
         bot_module.bot.is_playing.pop(guild_id, None)
         bot_module.bot.guild_configs.pop(guild_id, None)
 
+    @pytest.mark.asyncio
+    async def test_on_message_ignores_keycap_number_emoji(self):
+        """on_message は数字キーキャップ絵文字のみのメッセージを読み上げキューに追加しないこと"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 50002
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "1️⃣2️⃣3️⃣"
+        mock_message.author.id = 42
+
+        with patch.object(bot_module.bot, "process_commands", new_callable=AsyncMock), \
+             patch("asyncio.create_task") as mock_create_task:
+            await bot_module.on_message(mock_message)
+
+        assert bot_module.bot.voice_queues[guild_id].empty()
+        assert bot_module.bot.is_playing[guild_id] is False
+        mock_create_task.assert_not_called()
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
     def test_save_and_load_config_persists_per_guild_dictionary(self, tmp_path):
         """_save_config と VoiceBot 再生成で辞書がギルドごとにSQLiteに保存・復元されること"""
         config_file = tmp_path / "config.json"
