@@ -1311,6 +1311,46 @@ class TestPerGuildDictionary:
         bot_module.bot.is_playing.pop(guild_id, None)
         bot_module.bot.guild_configs.pop(guild_id, None)
 
+    @pytest.mark.asyncio
+    async def test_on_message_replaces_custom_emoji_with_emoji_name(self):
+        """on_message はカスタム絵文字をIDではなく名前として読み上げキューに追加すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 50003
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "<:na:1522077611616899094>"
+        mock_message.author.id = 42
+
+        with patch.object(bot_module.bot, "process_commands", new_callable=AsyncMock), \
+             patch("asyncio.create_task") as mock_create_task:
+            def cancel_coro(coro):
+                coro.close()
+                return MagicMock()
+            mock_create_task.side_effect = cancel_coro
+            await bot_module.on_message(mock_message)
+
+        queued = await bot_module.bot.voice_queues[guild_id].get()
+        assert queued["text"] == "na"
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
     def test_save_and_load_config_persists_per_guild_dictionary(self, tmp_path):
         """_save_config と VoiceBot 再生成で辞書がギルドごとにSQLiteに保存・復元されること"""
         config_file = tmp_path / "config.json"
