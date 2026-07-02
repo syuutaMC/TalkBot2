@@ -20,6 +20,15 @@ from src import prometheus_exporter as prom
 from src.dictionary_db import DictionaryDB
 
 KEYCAP_NUMBER_EMOJI_PATTERN = re.compile(r"[0-9#*]\ufe0f?\u20e3")
+CUSTOM_EMOJI_PATTERN = re.compile(r"<a?:([a-zA-Z0-9_]+):\d+>")
+UNICODE_EMOJI_PATTERN = re.compile(
+    r"[\U0001F1E6-\U0001F1FF"  # flags
+    r"\U0001F300-\U0001FAFF"  # symbols & pictographs
+    r"\U00002700-\U000027BF"  # dingbats
+    r"\U0001F3FB-\U0001F3FF"  # skin tone modifiers
+    r"\u200d"                 # zero width joiner
+    r"\ufe0f]"                # variation selector-16
+)
 
 # 環境変数の読み込み
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
@@ -517,6 +526,8 @@ async def on_message(message: discord.Message):
     
     # URLや特殊文字の処理（文中のURLを正規表現で置換）
     text = re.sub(r'https?://\S+', "URL省略", text)
+    text = CUSTOM_EMOJI_PATTERN.sub("", text)
+    text = UNICODE_EMOJI_PATTERN.sub("", text)
     text = KEYCAP_NUMBER_EMOJI_PATTERN.sub("", text)
     if not text.strip():
         return
