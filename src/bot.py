@@ -120,11 +120,15 @@ class VoiceBot(commands.Bot):
                     # 文字列キーを整数に変換
                     self.user_speakers = {int(k): v for k, v in config.get("user_speakers", {}).items()}
                     self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
+                    self.user_volumes = {int(k): v for k, v in config.get("user_volumes", {}).items()}
+                    self.user_intonations = {int(k): v for k, v in config.get("user_intonations", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
                     self.joined_guilds: Set[int] = set(config.get("joined_guilds", []))
             else:
                 self.user_speakers = {}
                 self.user_speeds = {}
+                self.user_volumes = {}
+                self.user_intonations = {}
                 self.guild_configs = {}
                 self.joined_guilds: Set[int] = set()
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
@@ -152,6 +156,8 @@ class VoiceBot(commands.Bot):
             print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
             self.user_speakers = {}
             self.user_speeds = {}
+            self.user_volumes = {}
+            self.user_intonations = {}
             self.guild_configs = {}
             self.joined_guilds: Set[int] = set()
     
@@ -167,6 +173,8 @@ class VoiceBot(commands.Bot):
             config = {
                 "user_speakers": {str(k): v for k, v in self.user_speakers.items()},
                 "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
+                "user_volumes": {str(k): v for k, v in self.user_volumes.items()},
+                "user_intonations": {str(k): v for k, v in self.user_intonations.items()},
                 "guild_configs": guild_configs_to_save,
                 "joined_guilds": list(self.joined_guilds),
             }
@@ -324,6 +332,8 @@ async def help_command(interaction: discord.Interaction):
 • `/voice <番号>` - 読み上げ音声を変更（下の一覧から選択）
 • `/speed <数値>` - 読み上げ速度を設定（0.5〜2.0）
 • `/speakers` - 詳細な話者一覧を表示
+• `/volume <数値>` - 個人音量を設定
+• `/intonation <数値>` - 個人の抑揚を設定
 • `/help` - このヘルプを表示
 
 **使い方:**
@@ -448,6 +458,22 @@ async def speed(interaction: discord.Interaction, speed: float):
     await interaction.response.send_message(f"✓ あなたの読み上げ速度を {speed} に設定しました", ephemeral=True)
 
 
+@bot.tree.command(name="volume", description="個人の読み上げ音量を設定します")
+@app_commands.describe(volume="音量スケール（デフォルト1.0）")
+async def volume(interaction: discord.Interaction, volume: float):
+    bot.user_volumes[interaction.user.id] = volume
+    bot._save_config()
+    prom.commands_total.labels(command="volume").inc()
+    await interaction.response.send_message(f"✓ あなたの音量を {volume} に設定しました", ephemeral=True)
+
+@bot.tree.command(name="intonation", description="個人の読み上げ抑揚を設定します")
+@app_commands.describe(intonation="抑揚スケール（デフォルト1.0）")
+async def intonation(interaction: discord.Interaction, intonation: float):
+    bot.user_intonations[interaction.user.id] = intonation
+    bot._save_config()
+    prom.commands_total.labels(command="intonation").inc()
+    await interaction.response.send_message(f"✓ あなたの抑揚を {intonation} に設定しました", ephemeral=True)
+
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     """ボイスチャンネルの状態が変更されたときのイベント"""
@@ -535,6 +561,8 @@ async def on_message(message: discord.Message):
     
     # ユーザーの速度設定を取得（未設定なら1.0）
     speed = bot.user_speeds.get(message.author.id, 1.0)
+    volume = bot.user_volumes.get(message.author.id, 1.0)
+    intonation = bot.user_intonations.get(message.author.id, 1.0)
     
     # キューに追加（未初期化の場合は初期化する）
     if guild_id not in bot.voice_queues:
@@ -542,7 +570,9 @@ async def on_message(message: discord.Message):
     await bot.voice_queues[guild_id].put({
         "text": text,
         "speaker_id": speaker_id,
-        "speed": speed
+        "speed": speed,
+        "volume": volume,
+        "intonation": intonation
     })
     
     # 再生タスクを開始（まだ開始していない場合）
@@ -576,10 +606,8 @@ async def play_voice_queue(guild: discord.Guild):
             start_time = time.monotonic()
             prom.voicevox_requests_total.inc()
             audio_data = await bot.voicevox.create_audio(
-                text=item["text"],
-                speaker_id=item["speaker_id"],
-                speed=item["speed"]
-            )
+                text=item["text"], speaker_id=item["speaker_id"], speed=item["speed"],
+                volume=item.get("volume", 1.0), intonation=item.get("intonation", 1.0))
             elapsed_ms = (time.monotonic() - start_time) * 1000
             
             if not audio_data:

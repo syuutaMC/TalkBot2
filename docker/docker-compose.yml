@@ -1,7 +1,7 @@
 services:
   # VOICEVOX Engine (GPU版)
   voicevox:
-    image: voicevox/voicevox_engine:nvidia-ubuntu20.04-latest
+    image: voicevox/voicevox_engine:nvidia-ubuntu24.04-0.25.2
     container_name: voicevox_engine
     privileged: true
     ports:

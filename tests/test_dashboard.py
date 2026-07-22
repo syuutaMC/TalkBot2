@@ -44,6 +44,8 @@ class TestReadConfig:
         assert config == {
             "user_speakers": {},
             "user_speeds": {},
+            "user_volumes": {},
+            "user_intonations": {},
             "guild_configs": {},
             "joined_guilds": [],
         }
@@ -169,6 +171,8 @@ class TestHandleApiStatus:
         config_data = {
             "user_speakers": {"1": 2, "3": 4},
             "user_speeds": {"1": 1.2},
+            "user_volumes": {"5": 0.8},
+            "user_intonations": {"3": 1.1, "6": 0.9},
             "guild_configs": {"100": {"read_channel": 200, "dictionary": {"a": "b"}}},
             "joined_guilds": [100, 200, 300],
         }
@@ -182,8 +186,10 @@ class TestHandleApiStatus:
             data = await resp.json()
 
         assert data["guild_count"] == 3
-        assert data["user_count"] == 2
+        assert data["user_count"] == 4
         assert data["dictionary_count"] == 1
+        assert data["user_volumes"] == {"5": 0.8}
+        assert data["user_intonations"] == {"3": 1.1, "6": 0.9}
 
     @pytest.mark.asyncio
     async def test_api_status_guild_count_uses_joined_guilds_not_guild_configs(self, aiohttp_client, app, tmp_path):
