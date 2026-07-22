@@ -57,7 +57,7 @@ class TestSetupHookCommandSync:
     """setup_hook のコマンド同期に関するテスト"""
 
     @pytest.mark.asyncio
-    async def test_setup_hook_with_test_guild_clears_global_commands(self):
+    async def test_setup_hook_with_test_guild_keeps_global_commands(self):
         """TEST_GUILD が設定されている場合、グローバルコマンドがクリアされてからギルドに同期されること"""
         bot = VoiceBot()
 
@@ -78,7 +78,7 @@ class TestSetupHookCommandSync:
         mock_copy.assert_called_once_with(guild=test_guild)
 
         # clear_commands が guild=None で呼ばれること（グローバルコマンドをクリア）
-        mock_clear.assert_called_once_with(guild=None)
+        mock_clear.assert_not_called()
 
         # sync が合計2回呼ばれること
         assert mock_sync.call_count == 2
@@ -92,7 +92,7 @@ class TestSetupHookCommandSync:
         await bot.close()
 
     @pytest.mark.asyncio
-    async def test_setup_hook_with_test_guild_copy_before_clear(self):
+    async def test_setup_hook_with_test_guild_syncs_global_and_guild(self):
         """TEST_GUILD が設定されている場合、copy_global_to が clear_commands より先に呼ばれること"""
         bot = VoiceBot()
 
@@ -121,12 +121,7 @@ class TestSetupHookCommandSync:
             await bot.setup_hook()
 
         # 呼び出し順序を確認
-        assert call_log == [
-            "copy_global_to",
-            "clear_commands",
-            "sync(global)",
-            "sync(guild)",
-        ]
+        assert call_log == ["copy_global_to", "sync(global)", "sync(guild)"]
 
         await bot.close()
 

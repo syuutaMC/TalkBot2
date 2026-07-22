@@ -199,7 +199,6 @@ class VoiceBot(commands.Bot):
             # まずグローバルコマンドをギルドにコピーしてからグローバルをクリアする
             # これにより、以前グローバルに同期された古いコマンドが残らないようにする
             self.tree.copy_global_to(guild=TEST_GUILD)
-            self.tree.clear_commands(guild=None)
             await self.tree.sync()
             await self.tree.sync(guild=TEST_GUILD)
             print(f"✓ スラッシュコマンドをギルド {TEST_GUILD.id} に同期しました（即座に反映）")
