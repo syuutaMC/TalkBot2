@@ -46,6 +46,7 @@ class TestReadConfig:
             "user_speeds": {},
             "user_volumes": {},
             "user_intonations": {},
+            "user_pitches": {},
             "guild_configs": {},
             "joined_guilds": [],
         }

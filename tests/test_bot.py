@@ -14,7 +14,7 @@ import pytest
 os.environ.setdefault("DISCORD_TOKEN", "dummy_token_for_testing")
 os.environ.setdefault("VOICEVOX_URL", "http://127.0.0.1:50021")
 
-from src.bot import VoiceBot, join, leave, play_voice_queue, _synthesize_to_file, on_guild_join, on_guild_remove, on_ready, on_voice_state_update, volume, intonation
+from src.bot import VoiceBot, join, leave, play_voice_queue, _synthesize_to_file, on_guild_join, on_guild_remove, on_ready, on_voice_state_update, volume, intonation, pitch
 
 
 def test_new_audio_settings_default_and_persist(tmp_path):
@@ -25,12 +25,15 @@ def test_new_audio_settings_default_and_persist(tmp_path):
         instance = VoiceBot()
         assert instance.user_volumes == {}
         assert instance.user_intonations == {}
+        assert instance.user_pitches == {}
         instance.user_volumes[5] = 0.8
         instance.user_intonations[5] = 1.3
+        instance.user_pitches[5] = 0.2
         instance._save_config()
         saved = json.loads(config_file.read_text(encoding="utf-8"))
         assert saved["user_volumes"] == {"5": 0.8}
         assert saved["user_intonations"] == {"5": 1.3}
+        assert saved["user_pitches"] == {"5": 0.2}
 
 
 @pytest.mark.asyncio
@@ -51,6 +54,19 @@ async def test_volume_and_intonation_commands_only_update_invoking_user():
     assert bot_module.bot.user_intonations == {20: 1.5}
     bot_module.bot.user_volumes = {}
     bot_module.bot.user_intonations = {}
+
+
+@pytest.mark.asyncio
+async def test_pitch_command_only_updates_invoking_user():
+    import src.bot as bot_module
+    bot_module.bot.user_pitches = {}
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user.id = 30
+    interaction.response = AsyncMock()
+    with patch.object(bot_module.bot, "_save_config"):
+        await pitch.callback(interaction, 0.2)
+    assert bot_module.bot.user_pitches == {30: 0.2}
+    bot_module.bot.user_pitches = {}
 
 
 class TestSetupHookCommandSync:

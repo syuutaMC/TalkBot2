@@ -24,6 +24,7 @@ TalkBot2は、DiscordサーバーでVOICEVOX Engineを使用した高品質な�
 |---------|------|------|-----|
 | `/volume <value>` | 音量を設定 | value: 音量 | `/volume 1.0` |
 | `/intonation <value>` | 抑揚を設定 | value: 抑揚 | `/intonation 1.0` |
+| `/pitch <value>` | 音高を設定 | value: 音高（デフォルト0.0） | `/pitch 0.2` |
 | `/join` | ボイスチャンネルに参加し、読み上げを開始 | - | `/join` |
 | `/leave` | ボイスチャンネルから退出 | - | `/leave` |
 | `/help` | 使い方とコマンド一覧を表示 | - | `/help` |

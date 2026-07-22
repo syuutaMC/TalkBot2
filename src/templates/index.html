@@ -301,10 +301,11 @@
           <th>読み上げ速度</th>
           <th>音量</th>
           <th>抑揚</th>
+          <th>音高</th>
         </tr>
       </thead>
       <tbody id="usersBody">
-        <tr class="empty-row"><td colspan="5">読み込み中…</td></tr>
+        <tr class="empty-row"><td colspan="6">読み込み中…</td></tr>
       </tbody>
     </table>
   </div>
@@ -459,9 +460,10 @@
         ...Object.keys(d.user_speeds   || {}),
         ...Object.keys(d.user_volumes  || {}),
         ...Object.keys(d.user_intonations || {}),
+        ...Object.keys(d.user_pitches || {}),
       ])];
       if (uids.length === 0) {
-        empty(usersBody, 5);
+        empty(usersBody, 6);
       } else {
         usersBody.innerHTML = uids.map(uid =>
           `<tr>
@@ -470,6 +472,7 @@
             <td>${d.user_speeds?.[uid]   ?? "—"}</td>
             <td>${d.user_volumes?.[uid]  ?? "—"}</td>
             <td>${d.user_intonations?.[uid] ?? "—"}</td>
+            <td>${d.user_pitches?.[uid] ?? "—"}</td>
           </tr>`
         ).join("");
       }

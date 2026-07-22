@@ -24,17 +24,18 @@ class _Response:
 
 
 @pytest.mark.asyncio
-async def test_create_audio_applies_volume_and_intonation_to_synthesis_json():
+async def test_create_audio_applies_volume_intonation_and_pitch_to_synthesis_json():
     session = MagicMock()
     session.post.side_effect = [
-        _Response(200, {"speedScale": 1.0, "volumeScale": 1.0, "intonationScale": 1.0}),
+        _Response(200, {"speedScale": 1.0, "volumeScale": 1.0, "intonationScale": 1.0, "pitchScale": 0.0}),
         _Response(200, body=b"audio"),
     ]
     client = VoicevoxClient("http://engine")
     client.session = session
 
-    assert await client.create_audio("hello", 3, 1.25, 0.7, 1.4) == b"audio"
+    assert await client.create_audio("hello", 3, 1.25, 0.7, 1.4, 0.2) == b"audio"
     synthesis = session.post.call_args_list[1]
     assert synthesis.kwargs["json"]["speedScale"] == 1.25
     assert synthesis.kwargs["json"]["volumeScale"] == 0.7
     assert synthesis.kwargs["json"]["intonationScale"] == 1.4
+    assert synthesis.kwargs["json"]["pitchScale"] == 0.2

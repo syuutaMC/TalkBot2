@@ -134,6 +134,7 @@ class VoiceBot(commands.Bot):
                     self.user_speeds = {int(k): v for k, v in config.get("user_speeds", {}).items()}
                     self.user_volumes = {int(k): v for k, v in config.get("user_volumes", {}).items()}
                     self.user_intonations = {int(k): v for k, v in config.get("user_intonations", {}).items()}
+                    self.user_pitches = {int(k): v for k, v in config.get("user_pitches", {}).items()}
                     self.guild_configs = {int(k): v for k, v in config.get("guild_configs", {}).items()}
                     self.joined_guilds: Set[int] = set(config.get("joined_guilds", []))
             else:
@@ -141,6 +142,7 @@ class VoiceBot(commands.Bot):
                 self.user_speeds = {}
                 self.user_volumes = {}
                 self.user_intonations = {}
+                self.user_pitches = {}
                 self.guild_configs = {}
                 self.joined_guilds: Set[int] = set()
                 print("⚠ 設定ファイルが見つかりません。新規作成します。")
@@ -173,6 +175,7 @@ class VoiceBot(commands.Bot):
             self.user_speeds = {}
             self.user_volumes = {}
             self.user_intonations = {}
+            self.user_pitches = {}
             self.guild_configs = {}
             self.joined_guilds: Set[int] = set()
     
@@ -195,6 +198,7 @@ class VoiceBot(commands.Bot):
                 "user_speeds": {str(k): v for k, v in self.user_speeds.items()},
                 "user_volumes": {str(k): v for k, v in self.user_volumes.items()},
                 "user_intonations": {str(k): v for k, v in self.user_intonations.items()},
+                "user_pitches": {str(k): v for k, v in self.user_pitches.items()},
                 "guild_configs": guild_configs_to_save,
                 "joined_guilds": list(self.joined_guilds),
             }
@@ -370,6 +374,7 @@ async def help_command(interaction: discord.Interaction):
 • `/speakers` - 詳細な話者一覧を表示
 • `/volume <数値>` - 個人音量を設定
 • `/intonation <数値>` - 個人の抑揚を設定
+• `/pitch <数値>` - 個人の音高を設定
 • `/help` - このヘルプを表示
 
 **使い方:**
@@ -510,6 +515,14 @@ async def intonation(interaction: discord.Interaction, intonation: float):
     prom.commands_total.labels(command="intonation").inc()
     await interaction.response.send_message(f"✓ あなたの抑揚を {intonation} に設定しました", ephemeral=True)
 
+@bot.tree.command(name="pitch", description="個人の読み上げ音高を設定します")
+@app_commands.describe(pitch="音高スケール（デフォルト0.0）")
+async def pitch(interaction: discord.Interaction, pitch: float):
+    bot.user_pitches[interaction.user.id] = pitch
+    bot._save_config()
+    prom.commands_total.labels(command="pitch").inc()
+    await interaction.response.send_message(f"✓ あなたの音高を {pitch} に設定しました", ephemeral=True)
+
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     """ボイスチャンネルの状態が変更されたときのイベント"""
@@ -602,6 +615,7 @@ async def on_message(message: discord.Message):
     speed = bot.user_speeds.get(message.author.id, 1.0)
     volume = bot.user_volumes.get(message.author.id, 1.0)
     intonation = bot.user_intonations.get(message.author.id, 1.0)
+    pitch = bot.user_pitches.get(message.author.id, 0.0)
     
     # キューに追加（未初期化の場合は初期化する）
     if guild_id not in bot.voice_queues:
@@ -611,7 +625,8 @@ async def on_message(message: discord.Message):
         "speaker_id": speaker_id,
         "speed": speed,
         "volume": volume,
-        "intonation": intonation
+        "intonation": intonation,
+        "pitch": pitch
     })
     
     # 再生タスクを開始（まだ開始していない場合）
@@ -636,13 +651,17 @@ async def _synthesize_to_file(item: dict) -> Optional[str]:
     """
     start_time = time.monotonic()
     prom.voicevox_requests_total.inc()
-    audio_data = await bot.voicevox.create_audio(
-        text=item["text"],
-        speaker_id=item["speaker_id"],
-        speed=item["speed"],
-        volume=item.get("volume", 1.0),
-        intonation=item.get("intonation", 1.0)
-    )
+    audio_args = {
+        "text": item["text"],
+        "speaker_id": item["speaker_id"],
+        "speed": item["speed"],
+        "volume": item.get("volume", 1.0),
+        "intonation": item.get("intonation", 1.0),
+    }
+    # 古いキュー項目との互換性を保ちつつ、新しい項目にはpitchを適用する。
+    if "pitch" in item:
+        audio_args["pitch"] = item["pitch"]
+    audio_data = await bot.voicevox.create_audio(**audio_args)
     elapsed_ms = (time.monotonic() - start_time) * 1000
 
     if not audio_data:
