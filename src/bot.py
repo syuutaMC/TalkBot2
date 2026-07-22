@@ -113,6 +113,7 @@ class VoiceBot(commands.Bot):
     
     def _load_config(self):
         """設定ファイルを読み込む"""
+        self._config_load_failed = False
         try:
             if CONFIG_FILE.exists():
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -150,6 +151,9 @@ class VoiceBot(commands.Bot):
             print(f"✓ 設定ファイルを読み込みました（話者設定: {len(self.user_speakers)}件、速度設定: {len(self.user_speeds)}件、辞書: {total_dict}件）")
         except Exception as e:
             print(f"⚠ 設定ファイルの読み込みに失敗: {e}")
+            # 壊れた設定を起動完了時に空設定で上書きしないためのフラグ。
+            # 復旧方法を確認するまで設定の保存を停止する。
+            self._config_load_failed = True
             self.user_speakers = {}
             self.user_speeds = {}
             self.guild_configs = {}
@@ -157,6 +161,11 @@ class VoiceBot(commands.Bot):
     
     def _save_config(self):
         """設定ファイルに保存する（辞書データはSQLiteで管理するためJSONには含めない）"""
+        if getattr(self, "_config_load_failed", False):
+            print("⚠ 設定ファイルの読み込みに失敗しているため、上書き保存をスキップします")
+            return
+
+        temp_path = None
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             # 辞書データはSQLiteで管理するため、JSONには含めない
@@ -170,10 +179,27 @@ class VoiceBot(commands.Bot):
                 "guild_configs": guild_configs_to_save,
                 "joined_guilds": list(self.joined_guilds),
             }
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            # 既存ファイルを直接 truncate せず、同一ディレクトリ内の一時ファイルを
+            # 完全に書き込んでから置換することで、途中終了時の設定破損を防止する。
+            fd, temp_path = tempfile.mkstemp(
+                dir=CONFIG_FILE.parent,
+                prefix=f".{CONFIG_FILE.name}.",
+                suffix=".tmp",
+            )
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CONFIG_FILE)
+            temp_path = None
         except Exception as e:
             print(f"⚠ 設定ファイルの保存に失敗: {e}")
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
     
     async def setup_hook(self):
         """Bot起動時の初期化処理"""
