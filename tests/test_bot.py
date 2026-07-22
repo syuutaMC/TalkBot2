@@ -14,7 +14,7 @@ import pytest
 os.environ.setdefault("DISCORD_TOKEN", "dummy_token_for_testing")
 os.environ.setdefault("VOICEVOX_URL", "http://127.0.0.1:50021")
 
-from src.bot import VoiceBot, join, leave, play_voice_queue, on_guild_join, on_guild_remove, on_ready, on_voice_state_update, volume, intonation
+from src.bot import VoiceBot, join, leave, play_voice_queue, _synthesize_to_file, on_guild_join, on_guild_remove, on_ready, on_voice_state_update, volume, intonation
 
 
 def test_new_audio_settings_default_and_persist(tmp_path):
@@ -625,6 +625,148 @@ class TestMultiGuildIsolation:
         bot_module.bot.voice_queues.pop(guild_id, None)
         bot_module.bot.is_playing.pop(guild_id, None)
 
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_synthesizes_all_queued_items(self):
+        """キューに2件ある場合、play_voice_queue は両方のアイテムを合成すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 909090909
+
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        for text in ["最初のメッセージ", "次のメッセージ"]:
+            await bot_module.bot.voice_queues[guild_id].put(
+                {"text": text, "speaker_id": 1, "speed": 1.0}
+            )
+        bot_module.bot.is_playing[guild_id] = False
+
+        synthesis_calls: list = []
+
+        async def fake_create_audio(text, speaker_id, speed, volume=1.0, intonation=1.0):
+            synthesis_calls.append(text)
+            return b"fake_audio"
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = None  # 再生はスキップ
+
+        with patch("src.bot.tempfile.NamedTemporaryFile"), \
+             patch("src.bot.os.unlink"):
+            bot_module.bot.voicevox.create_audio = fake_create_audio
+            await play_voice_queue(mock_guild)
+
+        assert "最初のメッセージ" in synthesis_calls
+        assert "次のメッセージ" in synthesis_calls
+        assert len(synthesis_calls) == 2
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_play_voice_queue_prefetches_next_audio_during_playback(self):
+        """play_voice_queue は音声再生中に次のアイテムの先読みを開始すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 111222333
+
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        await bot_module.bot.voice_queues[guild_id].put(
+            {"text": "最初", "speaker_id": 1, "speed": 1.0}
+        )
+        await bot_module.bot.voice_queues[guild_id].put(
+            {"text": "次", "speaker_id": 1, "speed": 1.0}
+        )
+        bot_module.bot.is_playing[guild_id] = False
+
+        synthesis_calls: list = []
+        second_synthesis_during_playback = False
+        first_playback_active = False
+
+        async def fake_create_audio(text, speaker_id, speed, volume=1.0, intonation=1.0):
+            nonlocal second_synthesis_during_playback
+            synthesis_calls.append(text)
+            if text == "次":
+                second_synthesis_during_playback = first_playback_active
+            await asyncio.sleep(0)  # イベントループに制御を返す
+            return b"fake_audio"
+
+        play_count = 0
+
+        def is_playing_fn():
+            nonlocal play_count, first_playback_active
+            if play_count == 0:
+                first_playback_active = True
+            play_count += 1
+            if play_count <= 2:
+                return True
+            first_playback_active = False
+            return False
+
+        mock_vc = MagicMock()
+        mock_vc.is_connected.return_value = True
+        mock_vc.is_playing.side_effect = is_playing_fn
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.voice_client = mock_vc
+
+        with patch("src.bot.tempfile.NamedTemporaryFile"), \
+             patch("src.bot.os.unlink"), \
+             patch("src.bot.discord.FFmpegPCMAudio"):
+            bot_module.bot.voicevox.create_audio = fake_create_audio
+            await play_voice_queue(mock_guild)
+
+        assert second_synthesis_during_playback, "2番目の合成は1番目の再生中に開始されるべき"
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+
+
+class TestSynthesizeToFile:
+    """_synthesize_to_file のテスト"""
+
+    @pytest.mark.asyncio
+    async def test_synthesize_to_file_returns_path_on_success(self):
+        """音声合成成功時にファイルパス（文字列）を返すこと"""
+        import src.bot as bot_module
+
+        async def fake_create_audio(text, speaker_id, speed, volume=1.0, intonation=1.0):
+            return b"wav_data"
+
+        bot_module.bot.voicevox.create_audio = fake_create_audio
+
+        with patch("src.bot.tempfile.NamedTemporaryFile") as mock_ntf, \
+             patch("src.bot.prom.voicevox_requests_total"), \
+             patch("src.bot.prom.voicevox_latency_seconds"), \
+             patch("src.bot.prom.voice_play_total"):
+            mock_ntf.return_value.__enter__.return_value.name = "/tmp/fake.wav"
+            result = await _synthesize_to_file(
+                {"text": "テスト", "speaker_id": 1, "speed": 1.0}
+            )
+
+        assert result == "/tmp/fake.wav"
+
+    @pytest.mark.asyncio
+    async def test_synthesize_to_file_returns_none_on_failure(self):
+        """音声合成失敗（None 返却）時に None を返すこと"""
+        import src.bot as bot_module
+
+        async def fake_create_audio_fail(text, speaker_id, speed, volume=1.0, intonation=1.0):
+            return None
+
+        bot_module.bot.voicevox.create_audio = fake_create_audio_fail
+
+        with patch("src.bot.prom.voicevox_requests_total"), \
+             patch("src.bot.prom.errors_total"), \
+             patch("src.bot.prom.voicevox_errors_total"):
+            result = await _synthesize_to_file(
+                {"text": "テスト", "speaker_id": 1, "speed": 1.0}
+            )
+
+        assert result is None
+
 
 class TestGuildTracking:
     """サーバー参加数追跡のテスト"""
@@ -1168,6 +1310,157 @@ class TestPerGuildDictionary:
         bot_module.bot.guild_configs.pop(guild_id, None)
         bot_module.bot.user_volumes = {}
         bot_module.bot.user_intonations = {}
+
+    @pytest.mark.asyncio
+    async def test_on_message_ignores_keycap_number_emoji(self):
+        """on_message は数字キーキャップ絵文字のみのメッセージを読み上げキューに追加しないこと"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 50002
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "1️⃣2️⃣3️⃣"
+        mock_message.author.id = 42
+
+        with patch.object(bot_module.bot, "process_commands", new_callable=AsyncMock), \
+             patch("asyncio.create_task") as mock_create_task:
+            await bot_module.on_message(mock_message)
+
+        assert bot_module.bot.voice_queues[guild_id].empty()
+        assert bot_module.bot.is_playing[guild_id] is False
+        mock_create_task.assert_not_called()
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_on_message_ignores_custom_emoji_only_message(self):
+        """on_message はカスタム絵文字のみのメッセージを読み上げキューに追加しないこと"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 50003
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "<:na:1522077611616899094>"
+        mock_message.author.id = 42
+
+        with patch.object(bot_module.bot, "process_commands", new_callable=AsyncMock), \
+             patch("asyncio.create_task") as mock_create_task:
+            await bot_module.on_message(mock_message)
+
+        assert bot_module.bot.voice_queues[guild_id].empty()
+        assert bot_module.bot.is_playing[guild_id] is False
+        mock_create_task.assert_not_called()
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_on_message_ignores_unicode_emoji_only_message(self):
+        """on_message はUnicode絵文字のみのメッセージを読み上げキューに追加しないこと"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 50004
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "😀🎉"
+        mock_message.author.id = 42
+
+        with patch.object(bot_module.bot, "process_commands", new_callable=AsyncMock), \
+             patch("asyncio.create_task") as mock_create_task:
+            await bot_module.on_message(mock_message)
+
+        assert bot_module.bot.voice_queues[guild_id].empty()
+        assert bot_module.bot.is_playing[guild_id] is False
+        mock_create_task.assert_not_called()
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
+
+    @pytest.mark.asyncio
+    async def test_on_message_keeps_text_when_mixed_with_emoji(self):
+        """on_message は絵文字を除去しつつテキスト部分を読み上げキューに追加すること"""
+        import asyncio
+        import src.bot as bot_module
+
+        guild_id = 50005
+        bot_module.bot.voice_queues[guild_id] = asyncio.Queue()
+        bot_module.bot.is_playing[guild_id] = False
+        bot_module.bot.guild_configs[guild_id] = {"read_channel": 777}
+        bot_module.bot.user_speakers = {}
+        bot_module.bot.user_speeds = {}
+
+        mock_guild = MagicMock()
+        mock_guild.id = guild_id
+        mock_guild.voice_client = MagicMock()
+
+        mock_message = MagicMock(spec=discord.Message)
+        mock_message.author.bot = False
+        mock_message.guild = mock_guild
+        mock_message.channel.id = 777
+        mock_message.clean_content = "こんにちは😀<:na:1522077611616899094>!"
+        mock_message.author.id = 42
+
+        with patch.object(bot_module.bot, "process_commands", new_callable=AsyncMock), \
+             patch("asyncio.create_task") as mock_create_task:
+            def cancel_coro(coro):
+                coro.close()
+                return MagicMock()
+            mock_create_task.side_effect = cancel_coro
+            await bot_module.on_message(mock_message)
+
+        queued = await bot_module.bot.voice_queues[guild_id].get()
+        assert queued["text"] == "こんにちは!"
+
+        # クリーンアップ
+        bot_module.bot.voice_queues.pop(guild_id, None)
+        bot_module.bot.is_playing.pop(guild_id, None)
+        bot_module.bot.guild_configs.pop(guild_id, None)
 
     def test_save_and_load_config_persists_per_guild_dictionary(self, tmp_path):
         """_save_config と VoiceBot 再生成で辞書がギルドごとにSQLiteに保存・復元されること"""
