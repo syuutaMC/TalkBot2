@@ -3,6 +3,7 @@
     "user_speeds": {},
     "user_volumes": {},
     "user_intonations": {},
+    "user_pitches": {},
     "guild_configs": {
         "123456789012345678": {
             "read_channel": 0
