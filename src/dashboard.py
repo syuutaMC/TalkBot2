@@ -32,7 +32,7 @@ def _load_config_sync() -> dict:
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"user_speakers": {}, "user_speeds": {}, "user_volumes": {}, "user_intonations": {}, "guild_configs": {}, "joined_guilds": []}
+    return {"user_speakers": {}, "user_speeds": {}, "user_volumes": {}, "user_intonations": {}, "user_pitches": {}, "guild_configs": {}, "joined_guilds": []}
 
 
 async def read_config() -> dict:
@@ -43,7 +43,7 @@ async def read_config() -> dict:
         return await asyncio.to_thread(_load_config_sync)
     except Exception as e:
         print(f"設定ファイル読み込みエラー: {e}")
-    return {"user_speakers": {}, "user_speeds": {}, "user_volumes": {}, "user_intonations": {}, "guild_configs": {}, "joined_guilds": []}
+    return {"user_speakers": {}, "user_speeds": {}, "user_volumes": {}, "user_intonations": {}, "user_pitches": {}, "guild_configs": {}, "joined_guilds": []}
 
 
 async def _fetch_voicevox(session: aiohttp.ClientSession, path: str) -> dict[str, Any]:
@@ -94,7 +94,7 @@ async def handle_api_status(request: web.Request) -> web.Response:
             print(f"辞書データ読み込みエラー: {e}")
 
     total_dictionary_count = sum(len(gc.get("dictionary", {})) for gc in guild_configs.values())
-    user_maps = [config.get(key, {}) for key in ("user_speakers", "user_speeds", "user_volumes", "user_intonations")]
+    user_maps = [config.get(key, {}) for key in ("user_speakers", "user_speeds", "user_volumes", "user_intonations", "user_pitches")]
     data = {
         "guild_count": len(config.get("joined_guilds", [])),
         "user_count": len(set().union(*(set(m.keys()) for m in user_maps))),
@@ -104,6 +104,7 @@ async def handle_api_status(request: web.Request) -> web.Response:
         "user_speeds": config.get("user_speeds", {}),
         "user_volumes": config.get("user_volumes", {}),
         "user_intonations": config.get("user_intonations", {}),
+        "user_pitches": config.get("user_pitches", {}),
     }
     return web.json_response(data)
 

@@ -47,6 +47,7 @@ class VoicevoxClient:
         speed: float = 1.0,
         volume: float = 1.0,
         intonation: float = 1.0,
+        pitch: float = 0.0,
     ) -> Optional[bytes]:
         """
         テキストから音声データを生成
@@ -57,6 +58,7 @@ class VoicevoxClient:
             speed (float): 読み上げ速度 (デフォルト: 1.0)
             volume (float): 音量スケール (デフォルト: 1.0)
             intonation (float): 抑揚スケール (デフォルト: 1.0)
+            pitch (float): 音高スケール (デフォルト: 0.0)
         
         Returns:
             Optional[bytes]: 音声データ (WAV形式)、エラー時はNone
@@ -77,6 +79,7 @@ class VoicevoxClient:
             query["speedScale"] = speed
             query["volumeScale"] = volume
             query["intonationScale"] = intonation
+            query["pitchScale"] = pitch
             
             # 音声合成
             params = {"speaker": speaker_id}
