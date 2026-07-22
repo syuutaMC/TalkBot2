@@ -14,14 +14,50 @@ import pytest
 os.environ.setdefault("DISCORD_TOKEN", "dummy_token_for_testing")
 os.environ.setdefault("VOICEVOX_URL", "http://127.0.0.1:50021")
 
-from src.bot import VoiceBot, join, leave, play_voice_queue, _synthesize_to_file, on_guild_join, on_guild_remove, on_ready, on_voice_state_update
+from src.bot import VoiceBot, join, leave, play_voice_queue, _synthesize_to_file, on_guild_join, on_guild_remove, on_ready, on_voice_state_update, volume, intonation
+
+
+def test_new_audio_settings_default_and_persist(tmp_path):
+    import src.bot as bot_module
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"user_speeds": {"5": 1.2}}), encoding="utf-8")
+    with patch.object(bot_module, "CONFIG_FILE", config_file):
+        instance = VoiceBot()
+        assert instance.user_volumes == {}
+        assert instance.user_intonations == {}
+        instance.user_volumes[5] = 0.8
+        instance.user_intonations[5] = 1.3
+        instance._save_config()
+        saved = json.loads(config_file.read_text(encoding="utf-8"))
+        assert saved["user_volumes"] == {"5": 0.8}
+        assert saved["user_intonations"] == {"5": 1.3}
+
+
+@pytest.mark.asyncio
+async def test_volume_and_intonation_commands_only_update_invoking_user():
+    import src.bot as bot_module
+    bot_module.bot.user_volumes = {}
+    bot_module.bot.user_intonations = {}
+    i1 = MagicMock(spec=discord.Interaction)
+    i1.user.id = 10
+    i1.response = AsyncMock()
+    i2 = MagicMock(spec=discord.Interaction)
+    i2.user.id = 20
+    i2.response = AsyncMock()
+    with patch.object(bot_module.bot, "_save_config"):
+        await volume.callback(i1, 0.6)
+        await intonation.callback(i2, 1.5)
+    assert bot_module.bot.user_volumes == {10: 0.6}
+    assert bot_module.bot.user_intonations == {20: 1.5}
+    bot_module.bot.user_volumes = {}
+    bot_module.bot.user_intonations = {}
 
 
 class TestSetupHookCommandSync:
     """setup_hook のコマンド同期に関するテスト"""
 
     @pytest.mark.asyncio
-    async def test_setup_hook_with_test_guild_clears_global_commands(self):
+    async def test_setup_hook_with_test_guild_keeps_global_commands(self):
         """TEST_GUILD が設定されている場合、グローバルコマンドがクリアされてからギルドに同期されること"""
         bot = VoiceBot()
 
@@ -42,7 +78,7 @@ class TestSetupHookCommandSync:
         mock_copy.assert_called_once_with(guild=test_guild)
 
         # clear_commands が guild=None で呼ばれること（グローバルコマンドをクリア）
-        mock_clear.assert_called_once_with(guild=None)
+        mock_clear.assert_not_called()
 
         # sync が合計2回呼ばれること
         assert mock_sync.call_count == 2
@@ -56,7 +92,7 @@ class TestSetupHookCommandSync:
         await bot.close()
 
     @pytest.mark.asyncio
-    async def test_setup_hook_with_test_guild_copy_before_clear(self):
+    async def test_setup_hook_with_test_guild_syncs_global_and_guild(self):
         """TEST_GUILD が設定されている場合、copy_global_to が clear_commands より先に呼ばれること"""
         bot = VoiceBot()
 
@@ -85,12 +121,7 @@ class TestSetupHookCommandSync:
             await bot.setup_hook()
 
         # 呼び出し順序を確認
-        assert call_log == [
-            "copy_global_to",
-            "clear_commands",
-            "sync(global)",
-            "sync(guild)",
-        ]
+        assert call_log == ["copy_global_to", "sync(global)", "sync(guild)"]
 
         await bot.close()
 
@@ -431,7 +462,7 @@ class TestMultiGuildIsolation:
         mock_guild.voice_client = None  # 切断済み
 
         # create_audio が呼ばれたタイミングでキューを削除（ギルド切断をシミュレート）
-        async def simulate_disconnect(text, speaker_id, speed):
+        async def simulate_disconnect(text, speaker_id, speed, volume=1.0, intonation=1.0):
             bot_module.bot.voice_queues.pop(guild_id, None)
             return None  # 切断後は音声データなし
 
@@ -466,7 +497,7 @@ class TestMultiGuildIsolation:
         mock_guild.id = guild_id
         mock_guild.voice_client = None  # 接続なし（再生はスキップされる）
 
-        async def fake_create_audio(text, speaker_id, speed):
+        async def fake_create_audio(text, speaker_id, speed, volume=1.0, intonation=1.0):
             return b"fake_audio_data"
 
         with patch("src.bot.prom.voice_play_total") as mock_voice_play, \
@@ -501,7 +532,7 @@ class TestMultiGuildIsolation:
         mock_guild.id = guild_id
         mock_guild.voice_client = None
 
-        async def fake_create_audio_fail(text, speaker_id, speed):
+        async def fake_create_audio_fail(text, speaker_id, speed, volume=1.0, intonation=1.0):
             return None  # 失敗をシミュレート
 
         with patch("src.bot.prom.voice_play_total") as mock_voice_play:
@@ -611,7 +642,7 @@ class TestMultiGuildIsolation:
 
         synthesis_calls: list = []
 
-        async def fake_create_audio(text, speaker_id, speed):
+        async def fake_create_audio(text, speaker_id, speed, volume=1.0, intonation=1.0):
             synthesis_calls.append(text)
             return b"fake_audio"
 
@@ -653,7 +684,7 @@ class TestMultiGuildIsolation:
         second_synthesis_during_playback = False
         first_playback_active = False
 
-        async def fake_create_audio(text, speaker_id, speed):
+        async def fake_create_audio(text, speaker_id, speed, volume=1.0, intonation=1.0):
             nonlocal second_synthesis_during_playback
             synthesis_calls.append(text)
             if text == "次":
@@ -701,7 +732,7 @@ class TestSynthesizeToFile:
         """音声合成成功時にファイルパス（文字列）を返すこと"""
         import src.bot as bot_module
 
-        async def fake_create_audio(text, speaker_id, speed):
+        async def fake_create_audio(text, speaker_id, speed, volume=1.0, intonation=1.0):
             return b"wav_data"
 
         bot_module.bot.voicevox.create_audio = fake_create_audio
@@ -722,7 +753,7 @@ class TestSynthesizeToFile:
         """音声合成失敗（None 返却）時に None を返すこと"""
         import src.bot as bot_module
 
-        async def fake_create_audio_fail(text, speaker_id, speed):
+        async def fake_create_audio_fail(text, speaker_id, speed, volume=1.0, intonation=1.0):
             return None
 
         bot_module.bot.voicevox.create_audio = fake_create_audio_fail
@@ -1246,6 +1277,8 @@ class TestPerGuildDictionary:
         }
         bot_module.bot.user_speakers = {}
         bot_module.bot.user_speeds = {}
+        bot_module.bot.user_volumes = {42: 0.7}
+        bot_module.bot.user_intonations = {42: 1.4}
 
         mock_guild = MagicMock()
         mock_guild.id = guild_id
@@ -1268,11 +1301,15 @@ class TestPerGuildDictionary:
 
         queued = await bot_module.bot.voice_queues[guild_id].get()
         assert queued["text"] == "てすと"
+        assert queued["volume"] == 0.7
+        assert queued["intonation"] == 1.4
 
         # クリーンアップ
         bot_module.bot.voice_queues.pop(guild_id, None)
         bot_module.bot.is_playing.pop(guild_id, None)
         bot_module.bot.guild_configs.pop(guild_id, None)
+        bot_module.bot.user_volumes = {}
+        bot_module.bot.user_intonations = {}
 
     @pytest.mark.asyncio
     async def test_on_message_ignores_keycap_number_emoji(self):

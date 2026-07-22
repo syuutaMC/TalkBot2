@@ -32,7 +32,7 @@ def _load_config_sync() -> dict:
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"user_speakers": {}, "user_speeds": {}, "guild_configs": {}, "joined_guilds": []}
+    return {"user_speakers": {}, "user_speeds": {}, "user_volumes": {}, "user_intonations": {}, "guild_configs": {}, "joined_guilds": []}
 
 
 async def read_config() -> dict:
@@ -43,7 +43,7 @@ async def read_config() -> dict:
         return await asyncio.to_thread(_load_config_sync)
     except Exception as e:
         print(f"設定ファイル読み込みエラー: {e}")
-    return {"user_speakers": {}, "user_speeds": {}, "guild_configs": {}, "joined_guilds": []}
+    return {"user_speakers": {}, "user_speeds": {}, "user_volumes": {}, "user_intonations": {}, "guild_configs": {}, "joined_guilds": []}
 
 
 async def _fetch_voicevox(session: aiohttp.ClientSession, path: str) -> dict[str, Any]:
@@ -94,13 +94,16 @@ async def handle_api_status(request: web.Request) -> web.Response:
             print(f"辞書データ読み込みエラー: {e}")
 
     total_dictionary_count = sum(len(gc.get("dictionary", {})) for gc in guild_configs.values())
+    user_maps = [config.get(key, {}) for key in ("user_speakers", "user_speeds", "user_volumes", "user_intonations")]
     data = {
         "guild_count": len(config.get("joined_guilds", [])),
-        "user_count": len(config.get("user_speakers", {})),
+        "user_count": len(set().union(*(set(m.keys()) for m in user_maps))),
         "dictionary_count": total_dictionary_count,
         "guild_configs": guild_configs,
         "user_speakers": config.get("user_speakers", {}),
         "user_speeds": config.get("user_speeds", {}),
+        "user_volumes": config.get("user_volumes", {}),
+        "user_intonations": config.get("user_intonations", {}),
     }
     return web.json_response(data)
 

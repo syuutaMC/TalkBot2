@@ -40,7 +40,14 @@ class VoicevoxClient:
             print(f"話者一覧取得エラー: {e}")
             return []
     
-    async def create_audio(self, text: str, speaker_id: int = 1, speed: float = 1.0) -> Optional[bytes]:
+    async def create_audio(
+        self,
+        text: str,
+        speaker_id: int = 1,
+        speed: float = 1.0,
+        volume: float = 1.0,
+        intonation: float = 1.0,
+    ) -> Optional[bytes]:
         """
         テキストから音声データを生成
         
@@ -48,6 +55,8 @@ class VoicevoxClient:
             text (str): 読み上げるテキスト
             speaker_id (int): 話者ID (デフォルト: 1)
             speed (float): 読み上げ速度 (デフォルト: 1.0)
+            volume (float): 音量スケール (デフォルト: 1.0)
+            intonation (float): 抑揚スケール (デフォルト: 1.0)
         
         Returns:
             Optional[bytes]: 音声データ (WAV形式)、エラー時はNone
@@ -66,6 +75,8 @@ class VoicevoxClient:
             
             # 速度の調整
             query["speedScale"] = speed
+            query["volumeScale"] = volume
+            query["intonationScale"] = intonation
             
             # 音声合成
             params = {"speaker": speaker_id}

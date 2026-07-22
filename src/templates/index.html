@@ -299,10 +299,12 @@
           <th>ユーザー ID</th>
           <th>話者 ID</th>
           <th>読み上げ速度</th>
+          <th>音量</th>
+          <th>抑揚</th>
         </tr>
       </thead>
       <tbody id="usersBody">
-        <tr class="empty-row"><td colspan="3">読み込み中…</td></tr>
+        <tr class="empty-row"><td colspan="5">読み込み中…</td></tr>
       </tbody>
     </table>
   </div>
@@ -455,15 +457,19 @@
       const uids = [...new Set([
         ...Object.keys(d.user_speakers || {}),
         ...Object.keys(d.user_speeds   || {}),
+        ...Object.keys(d.user_volumes  || {}),
+        ...Object.keys(d.user_intonations || {}),
       ])];
       if (uids.length === 0) {
-        empty(usersBody, 3);
+        empty(usersBody, 5);
       } else {
         usersBody.innerHTML = uids.map(uid =>
           `<tr>
             <td>${uid}</td>
             <td>${d.user_speakers?.[uid] ?? "—"}</td>
             <td>${d.user_speeds?.[uid]   ?? "—"}</td>
+            <td>${d.user_volumes?.[uid]  ?? "—"}</td>
+            <td>${d.user_intonations?.[uid] ?? "—"}</td>
           </tr>`
         ).join("");
       }
